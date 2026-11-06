@@ -190,7 +190,9 @@ class Session extends EventEmitter {
             this.emit('ended', 'The host closed the lobby.');
             return;
           }
-          this._log('Connection lost. Reconnecting...');
+          this._log(code === 1012
+            ? 'The host is restarting the app for an update. Reconnecting when it is back...'
+            : 'Connection lost. Reconnecting...');
           this._scheduleReconnect();
         }
         this._emitUpdate(true);

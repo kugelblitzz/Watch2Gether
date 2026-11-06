@@ -60,6 +60,8 @@ Voice goes over the same Tailscale connection as the lobby: the host relays each
 
 The app checks GitHub for a new release when it starts, every 30 minutes, and right after you leave a lobby (it never starts a download while you're watching). Click the version number in the top bar to check right away. Downloads happen in the background with a progress bar; when one is ready, the top bar shows **Restart to update**, or it installs the next time you close the app.
 
+**Restart to update** brings you straight back: the app reopens or rejoins the lobby you were in (same invite, same video, same spot, paused) and rejoins voice with the same mute / deafen state. If the host is the one updating, everyone else's app waits and reconnects by itself.
+
 ## Bandwidth (the one thing to check)
 
 Each streaming friend pulls the file's bitrate from the host's **upload** connection:

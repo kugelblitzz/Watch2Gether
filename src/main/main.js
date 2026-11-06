@@ -35,6 +35,39 @@ let session = null;
 let lobbyInfo = null;
 let settings = { name: '', port: DEFAULT_PORT, mpvPath: null, lastInvite: '', allowLan: false, playerMode: 'embedded', volume: 100 };
 let videoHost = null; // native window the in-app player draws into
+let lastJoin = null;  // { invite, localPath } of the lobby we joined as a guest
+
+/** A lobby saved before "Restart to update" is only picked up again within this window. */
+const RESUME_MAX_AGE_MS = 15 * 60 * 1000;
+
+/** Remember the current lobby (and voice state) so the updated app can go straight back. */
+function saveResume(voice) {
+  if (!lobbyInfo) return;
+  const rec = {
+    at: Date.now(),
+    name: settings.name,
+    role: lobbyInfo.role,
+    voice: voice && typeof voice === 'object'
+      ? { inVoice: !!voice.inVoice, muted: !!voice.muted, deafened: !!voice.deafened }
+      : null,
+  };
+  if (lobbyInfo.role === 'host' && server) {
+    rec.host = {
+      port: lobbyInfo.port,
+      allowLan: !!settings.allowLan,
+      code: server.code,
+      hostToken: server.hostToken,
+      filePath: server.media ? server.media.path : null,
+      mediaId: server.media ? server.media.id : null,
+      position: server.media ? server._currentPosition() : 0,
+    };
+  } else if (lastJoin) {
+    rec.guest = { invite: lastJoin.invite, localPath: lastJoin.localPath || null };
+  } else {
+    return;
+  }
+  saveSettings({ resume: rec });
+}
 
 /** Where the player draws: inside the app (embedded) or in mpv's own window (popout). */
 function playerWid() {
@@ -106,7 +139,8 @@ function wireSession(s) {
   });
 }
 
-async function leave() {
+/** @param restarting  restarting for an update: guests keep reconnecting instead of leaving */
+async function leave({ restarting = false } = {}) {
   hotkeys.stop();
   if (session) {
     session.removeAllListeners();
@@ -114,7 +148,7 @@ async function leave() {
     session = null;
   }
   if (server) {
-    server.stop();
+    server.stop({ restarting });
     server = null;
   }
   lobbyInfo = null;
@@ -160,18 +194,26 @@ function registerIpc() {
     return { path: p, name: path.basename(p), size: fs.statSync(p).size };
   });
 
-  ipcMain.handle('host:start', async (_e, { name, filePath, port, allowLan }) => {
+  ipcMain.handle('host:start', async (_e, { name, filePath, port, allowLan, resume }) => {
+    // resume: { code, hostToken, mediaId, position } to reopen the lobby we had before an update
     await leave();
     const mpvPath = requireMpv();
     port = Number(port) || DEFAULT_PORT;
     saveSettings({ name, port, allowLan: !!allowLan });
     const ts = await getTailscaleInfo();
 
-    const srv = new HostServer({ port, allowLan: !!allowLan });
+    const r = resume && typeof resume === 'object' ? resume : {};
+    const srv = new HostServer({ port, allowLan: !!allowLan, code: r.code, hostToken: r.hostToken });
     await srv.start();
     server = srv;
     try {
-      if (filePath) srv.setMedia(filePath); // optional: the host can pick one later
+      if (filePath) {
+        try {
+          srv.setMedia(filePath, { id: r.mediaId, position: r.position }); // optional: the host can pick one later
+        } catch (e) {
+          if (!resume) throw e; // reopening after an update and the file moved: open the lobby without it
+        }
+      }
       const addr = ts.ip || (allowLan ? lanIp() : null) || '127.0.0.1';
       lobbyInfo = {
         role: 'host',
@@ -211,6 +253,7 @@ function registerIpc() {
     const mpvPath = requireMpv();
     const inv = parseInvite(invite, DEFAULT_PORT);
     saveSettings({ name, lastInvite: invite });
+    lastJoin = { invite, localPath: localPath || null };
     lobbyInfo = { role: 'guest', code: inv.code, invite: `${inv.host}:${inv.port}/${inv.code}`, host: inv.host, port: inv.port };
     session = new Session({
       getWid: playerWid,
@@ -290,9 +333,16 @@ function registerIpc() {
   });
   ipcMain.handle('app:version', () => app.getVersion());
   ipcMain.handle('app:checkUpdates', () => checkNow());
-  ipcMain.handle('app:installUpdate', async () => {
-    await leave();
+  ipcMain.handle('app:installUpdate', async (_e, voice) => {
+    saveResume(voice); // come straight back to this lobby after the update
+    await leave({ restarting: true });
     installUpdate();
+  });
+  /** A lobby saved just before an update restart (used once, then forgotten). */
+  ipcMain.handle('app:resume', () => {
+    const rec = settings.resume;
+    if (rec) saveSettings({ resume: null });
+    return rec && Date.now() - rec.at < RESUME_MAX_AGE_MS ? rec : null;
   });
   ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text)));
   ipcMain.handle('open:external', (_e, url) => {

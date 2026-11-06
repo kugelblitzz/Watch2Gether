@@ -49,14 +49,18 @@ function makeCode() {
 }
 
 class HostServer extends EventEmitter {
-  constructor({ port = 8787, allowLan = false, pauseOnBuffer = true, helloTimeoutMs = HELLO_TIMEOUT_MS } = {}) {
+  /**
+   * code / hostToken: reopen an earlier lobby under the same room code (after the host's
+   * app restarts for an update), so guests' apps, which keep retrying, reconnect by themselves.
+   */
+  constructor({ port = 8787, allowLan = false, pauseOnBuffer = true, helloTimeoutMs = HELLO_TIMEOUT_MS, code = null, hostToken = null } = {}) {
     super();
     this.helloTimeoutMs = helloTimeoutMs;
     this.port = port;
     this.allowLan = allowLan;
     this.pauseOnBuffer = pauseOnBuffer;
-    this.code = makeCode();
-    this.hostToken = crypto.randomBytes(16).toString('hex');
+    this.code = typeof code === 'string' && /^[A-Z2-9]{6}$/.test(code) ? code : makeCode();
+    this.hostToken = typeof hostToken === 'string' && /^[a-f0-9]{32}$/.test(hostToken) ? hostToken : crypto.randomBytes(16).toString('hex');
     this.media = null;
     this.paused = true;
     this.position = 0;
@@ -97,10 +101,17 @@ class HostServer extends EventEmitter {
     });
   }
 
-  stop() {
+  /**
+   * @param restarting the host's app is restarting for an update and will reopen this lobby:
+   *   tell guests so (1012 = service restart) and they keep reconnecting instead of leaving.
+   */
+  stop({ restarting = false } = {}) {
     clearInterval(this.tick);
     for (const c of this.clients.values()) {
-      try { c.ws.close(1001, 'Host closed the lobby'); } catch { /* ignore */ }
+      try {
+        if (restarting) c.ws.close(1012, 'Host is restarting');
+        else c.ws.close(1001, 'Host closed the lobby');
+      } catch { /* ignore */ }
     }
     this.clients.clear();
     try { this.wss && this.wss.close(); } catch { /* ignore */ }
@@ -110,11 +121,12 @@ class HostServer extends EventEmitter {
     }
   }
 
-  setMedia(filePath) {
+  /** opts.id / opts.position: restore the same video id and spot (lobby reopened after an update). */
+  setMedia(filePath, opts = {}) {
     const st = fs.statSync(filePath);
     if (!st.isFile()) throw new Error('Not a file: ' + filePath);
     this.media = {
-      id: crypto.randomBytes(8).toString('hex'),
+      id: typeof opts.id === 'string' && /^[a-f0-9]{16}$/.test(opts.id) ? opts.id : crypto.randomBytes(8).toString('hex'),
       path: filePath,
       name: path.basename(filePath),
       size: st.size,
@@ -122,7 +134,7 @@ class HostServer extends EventEmitter {
       duration: null,
     };
     this.paused = true;
-    this.position = 0;
+    this.position = Number.isFinite(opts.position) && opts.position > 0 ? opts.position : 0;
     this.updatedAt = Date.now();
     for (const c of this.clients.values()) {
       if (!c.helloed) continue;

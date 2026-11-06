@@ -277,12 +277,6 @@ $('pmKick').addEventListener('click', () => {
 
 // ---------- settings sheet ----------
 
-function paintRange(input) {
-  const min = Number(input.min) || 0;
-  const max = Number(input.max) || 100;
-  input.style.setProperty('--pct', `${((Number(input.value) - min) / (max - min)) * 100}%`);
-}
-
 let meterRaf = null;
 let capturing = null; // action whose key is being chosen
 
@@ -462,6 +456,22 @@ const voiceUi = {
     voice.setServerMuted(!!(me && me.voice && me.voice.serverMuted));
     renderVoiceBar();
     paintSpeaking();
+  },
+  /** Back in voice after an update restart, with the same mute / deafen state. */
+  async rejoinVoice(state) {
+    // wait for the first lobby update, so a later reconnect can be recognised by its new id
+    for (let i = 0; i < 50 && !(last && last.me); i++) await new Promise((r) => setTimeout(r, 100));
+    if (!lobby || voice.joined) return;
+    voiceMe = last && last.me;
+    try {
+      await voice.join();
+    } catch (e) {
+      return showVoiceNotice('Could not rejoin voice: ' + cleanError(e));
+    }
+    if (state.deafened) voice.setDeafened(true);
+    else if (state.muted) voice.setMuted(true);
+    syncHotkeys();
+    renderVoiceBar();
   },
   onExitLobby() {
     voice.shutdown();

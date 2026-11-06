@@ -28,6 +28,10 @@ if (!videoFile) {
   process.exit(2);
 }
 
+// Voice uses Chromium's fake microphone (no real mic, no permission prompt).
+app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
+
 // Separate settings / single-instance lock from the user's installed app.
 app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'w2g-app-e2e-')));
 require('../../src/main/main.js');
@@ -107,9 +111,22 @@ app.whenReady().then(async () => {
     return { x: c.x + r.x, y: c.y + r.y, width: r.width, height: r.height };
   };
   const videoWindow = () => BaseWindow.getAllWindows().find((w) => !(w instanceof BrowserWindow));
+  // Any uncaught error in the page fails the run (a startup crash once hid the status badges).
+  const pageErrors = [];
+  win.webContents.on('console-message', (_e, level, msg) => {
+    if (level >= 3 || /Uncaught/.test(msg)) pageErrors.push(msg);
+  });
+  win.webContents.reload(); // start fresh so errors from startup are caught too
+  await until(() => !win.webContents.isLoading(), 10000, 'page reloaded');
 
   console.log('whole app (real UI + real mpv)');
   try {
+    await test('the app starts cleanly: status badges shown, no page errors', async () => {
+      await until(() => js('document.querySelectorAll("#envBadges .badge").length >= 2'), 15000, 'Tailscale / player badges');
+      await wait(500);
+      assert.deepStrictEqual(pageErrors, []);
+    });
+
     await test('host an empty lobby: no video window, a message on the stage', async () => {
       await js(`document.getElementById('name').value = 'Tester'; document.getElementById('hostBtn').click(); 0`);
       await until(() => js('!!lobby && !document.getElementById("screen-lobby").classList.contains("hidden")'), 10000, 'lobby');
@@ -146,6 +163,10 @@ app.whenReady().then(async () => {
       await js('api.fullscreen(true); 0');
       await until(() => js('document.body.classList.contains("fullscreen")'), 5000, 'fullscreen');
       await wait(2500); // let Windows' fullscreen animation finish before capturing
+      // The real mouse may rest at the left edge, which (correctly) slides the sidebar in.
+      // After the app's own cursor poller has reported, simulate the mouse in the middle.
+      win.webContents.send('cursor-x', 1500);
+      await wait(1300); // the sidebar hides 0.7 s after the mouse leaves, then slides away
       const c = win.getContentBounds();
       const v = colorful(inset(c, 60));
       console.log(`       fullscreen ${c.width}x${c.height}: ${(v * 100).toFixed(0)}% colorful`);
@@ -171,7 +192,7 @@ app.whenReady().then(async () => {
 
     await test('Esc leaves fullscreen', async () => {
       await js('api.fullscreen(false); 0');
-      await until(() => js('!document.body.classList.contains("fullscreen")') && !win.isFullScreen(), 5000, 'windowed');
+      await until(async () => (await js('!document.body.classList.contains("fullscreen")')) && !win.isFullScreen(), 5000, 'windowed');
       await wait(1200);
       assert(colorful(inset(await screenRect('#stage'))) > 0.3);
     });
@@ -194,9 +215,37 @@ app.whenReady().then(async () => {
       assert.strictEqual(videoWindow().isVisible(), false, 'nothing over the stage');
       // (no screen check here: mpv's own window opens mid-screen, right over the app)
       await js('document.getElementById("bringBack").click(); 0');
-      await until(() => js('!!(last && last.player.open)') && videoWindow().isVisible(), 10000, 'back in the app');
+      await until(async () => (await js('!!(last && last.player.open)')) && videoWindow().isVisible(), 10000, 'back in the app');
       await wait(2500);
       assert(colorful(inset(await screenRect('#stage'))) > 0.3, 'movie back in the stage');
+    });
+
+    await test('"Restart to update" comes straight back: same lobby, video and spot; voice rejoined, still muted', async () => {
+      await js(`voice.updateSettings({ soundCues: false, outputVolume: 0 }).then(() => document.getElementById('voiceJoin').click()); 0`);
+      await until(() => js('voice.joined'), 8000, 'in voice');
+      await js('voice.setMuted(true); 0');
+      await js('api.cmd("seek", 30); 0');
+      await until(() => js('Math.abs(last.room.current - 30) < 1'), 5000, 'at 30 s');
+      const before = JSON.parse(await js('JSON.stringify({ invite: lobby.invite, media: last.room.media.id })'));
+
+      await js('api.installUpdate({ inVoice: voice.joined, muted: voice.muted, deafened: voice.deafened }); 0');
+      await wait(1500); // saved + left the lobby (a dev build doesn't actually install)
+      win.webContents.reload(); // = the updated app starting
+      await until(() => js('typeof lobby !== "undefined" && !!lobby && !!(last && last.room && last.room.media)').catch(() => false), 20000, 'back in the lobby');
+      await until(() => js('voice.joined'), 10000, 'back in voice');
+      const after = JSON.parse(await js('JSON.stringify({ invite: lobby.invite, media: last.room.media.id, current: last.room.current, paused: last.room.paused, muted: voice.muted })'));
+      console.log(`       back at ${after.current.toFixed(1)} s, same invite: ${after.invite === before.invite}, muted: ${after.muted}`);
+      assert.strictEqual(after.invite, before.invite, 'same invite code: friends reconnect by themselves');
+      assert.strictEqual(after.media, before.media, 'same video');
+      assert(Math.abs(after.current - 30) < 2, 'same spot');
+      assert.strictEqual(after.paused, true);
+      assert.strictEqual(after.muted, true, 'still muted');
+      assert.strictEqual(await js('api.resumeInfo()'), null, 'used once, then forgotten');
+      await until(async () => (await js('!!last.player.open')) && videoWindow().isVisible(), 10000, 'player back in the app');
+    });
+
+    await test('no page errors during the whole run', async () => {
+      assert.deepStrictEqual(pageErrors, []);
     });
   } finally {
     console.log(`\n${passed} passed${failed ? `, ${failed} FAILED` : ''}`);

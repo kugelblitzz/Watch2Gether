@@ -539,6 +539,70 @@ async function test(name, fn) {
     g4.stop(); vs2.stop();
   });
 
+  await test('host restarts for an update: same lobby comes back, guests reconnect by themselves, no video reload', async () => {
+    const rp = port + 8;
+    const s1 = new HostServer({ port: rp });
+    await s1.start();
+    s1.setMedia(file);
+    const before = FakeMpv.instances.length;
+    let ended = null;
+    const g5 = new Session({ baseUrl: `http://127.0.0.1:${rp}`, code: s1.code, name: 'G5', mpvPath: 'fake' });
+    g5.on('ended', (r) => { ended = r; });
+    await g5.start();
+    await until(() => FakeMpv.instances.length === before + 1 && FakeMpv.instances[before].loaded, 2000, 'guest player');
+    const gp = FakeMpv.instances[before];
+    const loadsBefore = gp.loaded;
+    s1._apply({ name: 'Host' }, 'seek', 42);
+    await until(() => Math.abs(g5._expectedPosition() - 42) < 0.5, 2000, 'at 42 s');
+    // what the host's app saves before "Restart to update"
+    const saved = { code: s1.code, hostToken: s1.hostToken, mediaId: s1.media.id, position: s1._currentPosition() };
+
+    s1.stop({ restarting: true });
+    await until(() => !g5.connected, 2000, 'guest notices');
+    await wait(500);
+    assert.strictEqual(ended, null, 'guest did NOT leave the lobby');
+    assert(g5.log.some((l) => /restarting the app for an update/.test(l.text)), 'guest is told why');
+
+    // the updated app reopens the same lobby
+    const s2 = new HostServer({ port: rp, code: saved.code, hostToken: saved.hostToken });
+    await s2.start();
+    s2.setMedia(file, { id: saved.mediaId, position: saved.position });
+    assert.strictEqual(s2.code, saved.code);
+    assert.strictEqual(s2.hostToken, saved.hostToken, 'host keeps host rights');
+    await until(() => g5.connected, 6000, 'guest reconnects by itself');
+    await wait(300);
+    assert.strictEqual(ended, null);
+    assert.strictEqual(gp.loaded, loadsBefore, 'same video id: the guest did not reload it');
+    assert.strictEqual(FakeMpv.instances.length, before + 1, 'no new player');
+    assert(Math.abs(g5._expectedPosition() - 42) < 0.5, 'still at 42 s');
+    assert.strictEqual(s2.paused, true, 'reopens paused so everyone can get ready');
+    g5.stop(); s2.stop();
+  });
+
+  await test('a normal "close the lobby" still sends guests home', async () => {
+    const rp = port + 9;
+    const s3 = new HostServer({ port: rp });
+    await s3.start();
+    let ended = null;
+    const g6 = new Session({ baseUrl: `http://127.0.0.1:${rp}`, code: s3.code, name: 'G6', mpvPath: 'fake' });
+    g6.on('ended', (r) => { ended = r; });
+    await g6.start();
+    s3.stop();
+    await until(() => ended, 2000, 'ended');
+    assert.match(ended, /closed the lobby/);
+    g6.stop();
+  });
+
+  await test('bad restore values are ignored (fresh code / token / id)', async () => {
+    const s4 = new HostServer({ port: port + 10, code: 'lower!', hostToken: 'nothex' });
+    assert.match(s4.code, /^[A-Z2-9]{6}$/);
+    assert.notStrictEqual(s4.code, 'lower!');
+    assert.match(s4.hostToken, /^[a-f0-9]{32}$/);
+    s4.setMedia(file, { id: '../../etc', position: -5 });
+    assert.match(s4.media.id, /^[a-f0-9]{16}$/);
+    assert.strictEqual(s4.position, 0);
+  });
+
   await test('host changes video -> everyone reloads, paused at 0', async () => {
     const file2 = path.join(dir, 'other.mp4');
     fs.writeFileSync(file2, data.subarray(0, 1000));

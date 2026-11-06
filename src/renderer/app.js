@@ -44,8 +44,17 @@ function el(tag, props = {}, ...children) {
 
 function showError(msg) {
   const box = $('homeError');
+  box.classList.remove('info');
   box.textContent = msg;
   box.classList.toggle('hidden', !msg);
+}
+
+/** Neutral message in the same spot, optionally with buttons. */
+function showInfo(msg, ...buttons) {
+  const box = $('homeError');
+  box.classList.add('info');
+  box.replaceChildren(el('span', { text: msg }), ...buttons);
+  box.classList.remove('hidden');
 }
 
 function cleanError(e) {
@@ -56,6 +65,13 @@ function myName() {
   const n = $('name').value.trim();
   if (!n) throw new Error('Enter your name first.');
   return n;
+}
+
+/** Fill a range slider's track up to its value (CSS reads --pct). Used by app.js and voice-ui.js. */
+function paintRange(input) {
+  const min = Number(input.min) || 0;
+  const max = Number(input.max) || 100;
+  input.style.setProperty('--pct', `${((Number(input.value) - min) / (max - min)) * 100}%`);
 }
 
 function busy(btn, on, label) {
@@ -512,10 +528,64 @@ api.onAppUpdate((u) => {
 
 $('appUpdateBtn').addEventListener('click', () => {
   if (lobby && !confirm(lobby.role === 'host'
-    ? 'Restarting closes the lobby for everyone. Update now?'
-    : 'Restarting leaves the lobby. Update now?')) return;
-  api.installUpdate();
+    ? 'The app restarts for a few seconds and reopens this lobby; everyone reconnects by themselves. Update now?'
+    : 'The app restarts for a few seconds and rejoins this lobby. Update now?')) return;
+  // remembered so the updated app goes straight back into this lobby (and voice)
+  api.installUpdate({ inVoice: voice.joined, muted: voice.muted, deafened: voice.deafened });
 });
+
+// ---------- back into the lobby after "Restart to update" ----------
+
+const RESUME_GUEST_WAIT_MS = 90000; // the host may be restarting for the update too
+
+async function resumeAfterUpdate() {
+  const r = await api.resumeInfo();
+  if (!r || lobby) return;
+  const name = r.name || $('name').value.trim() || 'Guest';
+  $('name').value = name;
+  let cancelled = false;
+  const cancel = el('button', { class: 'small', text: 'Cancel' });
+  cancel.addEventListener('click', () => { cancelled = true; showError(''); });
+  showInfo('Updated! Getting you back into your lobby…', cancel);
+  try {
+    if (r.host) {
+      const h = r.host;
+      lobby = await api.host({
+        name,
+        filePath: h.filePath,
+        port: h.port,
+        allowLan: h.allowLan,
+        resume: { code: h.code, hostToken: h.hostToken, mediaId: h.mediaId, position: h.position },
+      });
+    } else if (r.guest) {
+      const end = Date.now() + RESUME_GUEST_WAIT_MS;
+      for (;;) {
+        try {
+          lobby = await api.join({ name, invite: r.guest.invite, localPath: r.guest.localPath });
+          break;
+        } catch (e) {
+          // a refusal means the lobby is gone; anything else (host offline) is worth waiting for
+          if (cancelled || Date.now() > end || /refused|no longer exists/i.test(cleanError(e))) throw e;
+          showInfo('Updated! Waiting for the host to come back…', cancel);
+          await new Promise((res) => setTimeout(res, 3000));
+          if (cancelled) return;
+        }
+      }
+    } else {
+      return showError('');
+    }
+    if (cancelled) {
+      await api.leave();
+      lobby = null;
+      return;
+    }
+    showError('');
+    enterLobby();
+    if (r.voice && r.voice.inVoice) await voiceUi.rejoinVoice(r.voice);
+  } catch (e) {
+    if (!cancelled) showError("Couldn't get back into your lobby: " + cleanError(e));
+  }
+}
 
 api.onUpdate((u) => {
   if (!lobby) return;
@@ -672,4 +742,5 @@ function renderLog(log) {
   $('name').addEventListener('change', () => api.saveSettings({ name: $('name').value.trim() }));
   showScreen('screen-home');
   await refreshEnv();
+  await resumeAfterUpdate();
 })();

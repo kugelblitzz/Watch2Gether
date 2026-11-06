@@ -638,3 +638,6 @@ body.fullscreen .stage-col .controls, body.fullscreen .stage-col .status-row { d
 .volume { display: flex; align-items: center; gap: 4px; flex: none; }
 .volume #volSlider { width: 96px; }
 #volBtn.off { color: var(--warn); }
+
+/* neutral notice in the error spot (e.g. "getting you back into your lobby") */
+.error.info { background: rgba(10, 132, 255, .1); border-color: rgba(10, 132, 255, .3); color: var(--text); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
