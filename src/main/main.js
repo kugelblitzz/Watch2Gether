@@ -219,9 +219,13 @@ function createWindow() {
     height: 760,
     minWidth: 760,
     minHeight: 560,
-    backgroundColor: '#0f1115',
+    backgroundColor: '#0b0b0d',
     title: 'Watch2Gether',
     autoHideMenuBar: true,
+    // Unified title bar: the app's top bar is the title bar; Windows draws only the
+    // min/max/close buttons over it. Colors must match .topbar in styles.css.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#161618', symbolColor: '#f5f5f7', height: 52 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

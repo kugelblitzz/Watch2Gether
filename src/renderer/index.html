@@ -8,20 +8,28 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="logo">▶</span> Watch2Gether</div>
+    <div class="brand">
+      <span class="logo"><svg viewBox="0 0 10 12" fill="currentColor"><path d="M0 1.1v9.8a1 1 0 0 0 1.5.86l8.2-4.9a1 1 0 0 0 0-1.72L1.5.24A1 1 0 0 0 0 1.1z"/></svg></span>
+      Watch2Gether
+    </div>
     <div class="topbar-right">
       <div id="appUpdate" class="app-update hidden">
         <span id="appUpdateText"></span>
         <button id="appUpdateBtn" class="primary small hidden">Restart to update</button>
       </div>
       <div id="envBadges" class="badges"></div>
-      <span id="appVersion" class="muted small"></span>
+      <span id="appVersion" class="small"></span>
     </div>
   </header>
 
   <main>
     <!-- HOME -->
     <section id="screen-home">
+      <div class="hero">
+        <h1>Watch together.</h1>
+        <p>Full quality, perfectly in sync, straight from one PC to your friends.</p>
+      </div>
+
       <div id="setup"></div>
 
       <label class="field name-field">
@@ -31,8 +39,13 @@
 
       <div class="cards">
         <div class="card">
-          <h2>Host a lobby</h2>
-          <p class="muted">Pick a video on this PC. Your friends stream it from you over Tailscale, at full quality with no re-encoding.</p>
+          <div class="card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="3"/><path d="M8 21h8M12 18v3"/></svg>
+          </div>
+          <div>
+            <h2>Host a lobby</h2>
+            <p class="muted">Pick a video on this PC. Your friends stream it from you over Tailscale, at full quality with no re-encoding.</p>
+          </div>
           <div class="file-row">
             <button id="pickFile">Choose video…</button>
             <span id="pickedFile" class="muted ellipsis">No file chosen</span>
@@ -46,8 +59,13 @@
         </div>
 
         <div class="card">
-          <h2>Join a lobby</h2>
-          <p class="muted">Paste the invite your friend sent you.</p>
+          <div class="card-icon join">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M17 8v6M14 11h6"/></svg>
+          </div>
+          <div>
+            <h2>Join a lobby</h2>
+            <p class="muted">Paste the invite your friend sent you.</p>
+          </div>
           <input id="invite" placeholder="100.x.y.z:8787/ROOMCODE" spellcheck="false">
           <details>
             <summary>I already have this video</summary>
@@ -67,24 +85,27 @@
     <section id="screen-lobby" class="hidden">
       <div class="lobby-head">
         <div class="now">
-          <div class="muted small">Now playing</div>
+          <h3>Now playing</h3>
           <h2 id="mediaName" class="ellipsis">-</h2>
           <div id="mediaMeta" class="muted small"></div>
         </div>
         <div class="invite-box">
-          <div class="muted small">Invite friends</div>
-          <code id="inviteCode"></code>
-          <div class="invite-actions">
-            <button id="copyInvite">Copy invite</button>
+          <h3>Invite friends</h3>
+          <div class="invite-row">
+            <code id="inviteCode"></code>
+            <button id="copyInvite">Copy</button>
           </div>
           <div id="inviteAlt" class="muted small"></div>
         </div>
       </div>
 
       <div class="controls">
-        <button id="playPause" class="big" title="Play / pause (Space)">▶</button>
+        <button id="playPause" class="big" title="Play / pause (Space)" aria-label="Play or pause">
+          <svg class="i-play" viewBox="0 0 10 12" fill="currentColor"><path d="M0 1.1v9.8a1 1 0 0 0 1.5.86l8.2-4.9a1 1 0 0 0 0-1.72L1.5.24A1 1 0 0 0 0 1.1z"/></svg>
+          <svg class="i-pause" viewBox="0 0 12 12" fill="currentColor"><rect x="1" y="0" width="3.6" height="12" rx="1.2"/><rect x="7.4" y="0" width="3.6" height="12" rx="1.2"/></svg>
+        </button>
         <span id="timeCur" class="time">0:00</span>
-        <input type="range" id="seek" min="0" max="1" value="0" step="0.1">
+        <input type="range" id="seek" min="0" max="1" value="0" step="0.1" aria-label="Seek">
         <span id="timeDur" class="time">0:00</span>
       </div>
       <div id="statusLine" class="status"></div>
@@ -100,7 +121,7 @@
           <div id="log"></div>
           <form id="chatForm">
             <input id="chatInput" placeholder="Say something…" maxlength="500" autocomplete="off">
-            <button type="submit">Send</button>
+            <button type="submit" class="primary">Send</button>
           </form>
         </div>
       </div>
@@ -111,7 +132,7 @@
         <span class="spacer"></span>
         <button id="leave" class="danger">Leave lobby</button>
       </div>
-      <p class="muted small tip">Tip: you can also control playback from the player window: Space pauses, ←/→ seek, <b>#</b> switches audio track, <b>j</b> switches subtitles, <b>f</b> toggles fullscreen. Everyone stays in sync.</p>
+      <p class="small tip">Tip: you can also control playback from the player window: Space pauses, ←/→ seek, <b>#</b> switches audio track, <b>j</b> switches subtitles, <b>f</b> toggles fullscreen. Everyone stays in sync.</p>
     </section>
   </main>
 

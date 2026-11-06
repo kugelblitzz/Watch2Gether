@@ -168,11 +168,35 @@ $('joinBtn').addEventListener('click', async () => {
 
 $('invite').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('joinBtn').click(); });
 
+// ---------- screens ----------
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let screenTimer = null;
+
+/** Cross-fade between screens: the old one lifts away, the new one rises in. */
+function showScreen(id) {
+  const next = $(id);
+  const prev = document.querySelector('main > section:not(.hidden)');
+  clearTimeout(screenTimer);
+  const enter = () => {
+    document.querySelectorAll('main > section').forEach((s) => {
+      s.classList.remove('screen-out', 'screen-in');
+      s.classList.toggle('hidden', s !== next);
+    });
+    document.querySelector('main').scrollTop = 0;
+    void next.offsetWidth; // restart the animation
+    next.classList.add('screen-in');
+    screenTimer = setTimeout(() => next.classList.remove('screen-in'), 900);
+  };
+  if (!prev || prev === next || reducedMotion.matches) return enter();
+  prev.classList.add('screen-out');
+  screenTimer = setTimeout(enter, 170);
+}
+
 // ---------- lobby ----------
 
 function enterLobby() {
-  $('screen-home').classList.add('hidden');
-  $('screen-lobby').classList.remove('hidden');
+  showScreen('screen-lobby');
   renderedLogCount = 0;
   $('log').replaceChildren();
   const isHost = lobby.role === 'host';
@@ -188,22 +212,31 @@ function enterLobby() {
 function exitLobby(reason) {
   lobby = null;
   last = null;
-  $('screen-lobby').classList.add('hidden');
-  $('screen-home').classList.remove('hidden');
+  showScreen('screen-home');
   if (reason) showError(reason);
   refreshEnv();
 }
 
 $('copyInvite').addEventListener('click', async () => {
+  const b = $('copyInvite');
   await api.copy($('inviteCode').textContent);
-  $('copyInvite').textContent = 'Copied!';
-  setTimeout(() => { $('copyInvite').textContent = 'Copy invite'; }, 1500);
+  b.textContent = 'Copied ✓';
+  b.classList.add('copied');
+  clearTimeout(b._t);
+  b._t = setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('copied'); }, 1600);
 });
 
 $('playPause').addEventListener('click', () => api.cmd('toggle'));
 
+function paintSeek() {
+  const s = $('seek');
+  const max = Number(s.max) || 1;
+  s.style.setProperty('--pct', `${Math.min(100, (Number(s.value) / max) * 100)}%`);
+}
+
 $('seek').addEventListener('input', () => {
   dragging = true;
+  paintSeek();
   $('timeCur').textContent = fmt(Number($('seek').value));
 });
 $('seek').addEventListener('change', () => {
@@ -296,11 +329,12 @@ function render(u) {
 
   // transport
   const cur = r ? r.current : 0;
-  $('playPause').textContent = r && !r.paused ? '❚❚' : '▶';
+  $('playPause').classList.toggle('playing', !!(r && !r.paused));
   $('seek').max = String(dur || 1);
   if (!dragging) {
     $('seek').value = String(cur || 0);
     $('timeCur').textContent = fmt(cur);
+    paintSeek();
   }
   $('timeDur').textContent = fmt(dur);
 
@@ -322,6 +356,7 @@ function render(u) {
     status.classList.add('warn');
   } else if (r && r.paused) {
     text = 'Paused';
+    status.classList.add('idle');
   } else if (r) {
     const d = Math.abs(u.player.drift || 0);
     text = `Playing in sync${d > 0.05 ? ` (${Math.round(d * 1000)} ms off, correcting)` : ''}`;
@@ -333,18 +368,31 @@ function render(u) {
   renderLog(u.log);
 }
 
+const AVATAR_COLORS = 8;
+function avatarColor(name) {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return 'c' + (h % AVATAR_COLORS);
+}
+function initials(name) {
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+  const s = parts.length > 1 ? parts[0][0] + parts[1][0] : (parts[0] || '?').slice(0, 2);
+  return s.toUpperCase();
+}
+
 function renderMembers(u, media, dur) {
   const list = $('members');
   list.replaceChildren();
   for (const m of u.members || []) {
     const dotClass = m.lagging ? 'dot lagging' : m.buffering ? 'dot buffering' : 'dot';
     const tags = [];
-    if (m.isHost) tags.push(el('span', { class: 'tag', text: 'host' }));
+    if (m.isHost) tags.push(el('span', { class: 'tag host', text: 'host' }));
     if (m.id === u.me) tags.push(el('span', { class: 'tag', text: 'you' }));
     if (!m.isHost && m.source === 'local') tags.push(el('span', { class: 'tag', text: 'local copy' }));
     const detail = m.lagging ? 'behind' : m.buffering ? 'buffering' : (m.rtt != null && !m.isHost ? `${m.rtt} ms` : '');
+    const avatar = el('span', { class: 'avatar ' + avatarColor(m.name), text: initials(m.name) }, el('span', { class: dotClass }));
     list.append(el('li', {},
-      el('span', { class: dotClass }),
+      avatar,
       el('span', { class: 'member-name ellipsis', text: m.name }),
       ...tags,
       el('span', { class: 'muted small', text: detail })));
@@ -391,5 +439,6 @@ function renderLog(log) {
   $('allowLan').checked = !!settings.allowLan;
   $('invite').value = settings.lastInvite || '';
   $('name').addEventListener('change', () => api.saveSettings({ name: $('name').value.trim() }));
+  showScreen('screen-home');
   await refreshEnv();
 })();
