@@ -47,6 +47,15 @@ const FRAME_SAMPLES = 960;       // 20 ms
 const VAD_TICK_MS = 20;
 const VAD_RELEASE_MS = 300;      // keep sending this long after speech, so word endings survive
 const SPEAKING_HOLD_MS = 250;
+// Voice activity ignores short bursts (keyboard / mouse clicks, bumps): sound has to stay
+// above the threshold for VAD_ATTACK_MS of real time before the mic opens (a click lasts
+// a few ms, a syllable 100+ ms). The level is measured over ~11 ms windows so one click
+// can't show up in two readings. The sent audio runs VAD_LOOKAHEAD_S behind the detector,
+// so the start of a word isn't cut off.
+const VAD_ATTACK_MS = 50;
+const VAD_LOOKAHEAD_S = 0.08;
+// A friend's ring lights only while what we receive from them is actually audible.
+const REMOTE_SPEAKING_DB = -50;
 const DENOISE_DEAD_TICKS = 75;
 // Automatic sensitivity: open this far above the room's noise floor, but never below
 // AUTO_MIN_DB. After AI noise removal the floor is very low, and a -62 dB minimum let
@@ -74,10 +83,11 @@ function loadVoiceSettings() {
 }
 
 function levelDb(analyser, buf) {
-  analyser.getFloatTimeDomainData(buf);
+  const win = buf.subarray(0, Math.min(buf.length, analyser.fftSize)); // exactly the analyser's window
+  analyser.getFloatTimeDomainData(win);
   let sum = 0;
-  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-  return 20 * Math.log10(Math.sqrt(sum / buf.length) + 1e-9);
+  for (let i = 0; i < win.length; i++) sum += win[i] * win[i];
+  return 20 * Math.log10(Math.sqrt(sum / win.length) + 1e-9);
 }
 
 class VoiceEngine {
@@ -292,7 +302,6 @@ class VoiceEngine {
     const id = String.fromCharCode(...bytes.subarray(1, 9));
     const peer = this._peer(id);
     if (!peer.decoder || peer.decoder.state === 'closed') return;
-    peer.lastFrame = performance.now();
     peer.ts += 20000;
     try {
       peer.decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: peer.ts, data: bytes.subarray(13) }));
@@ -317,8 +326,8 @@ class VoiceEngine {
     this.inGain = ctx.createGain();
     this.inGain.gain.value = this.settings.inputVolume;
     this.analyser = ctx.createAnalyser();
-    this.analyser.fftSize = 1024;
-    this.levelBuf = new Float32Array(this.analyser.fftSize);
+    this.analyser.fftSize = 512;
+    this.levelBuf = new Float32Array(1024);
     this.gate = ctx.createGain();
     this.gate.gain.value = 0;
     this.capture = new AudioWorkletNode(ctx, 'w2g-capture', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit' });
@@ -326,7 +335,9 @@ class VoiceEngine {
     this.monitor = ctx.createGain(); // mic test: hear yourself after processing + gate
     this.monitor.gain.value = 0;
     this.inGain.connect(this.analyser);
-    this.inGain.connect(this.gate);
+    this.lookahead = ctx.createDelay(0.2);
+    this.lookahead.delayTime.value = VAD_LOOKAHEAD_S;
+    this.inGain.connect(this.lookahead).connect(this.gate);
     this.gate.connect(this.capture);
     this.gate.connect(this.monitor).connect(ctx.destination);
 
@@ -516,7 +527,13 @@ class VoiceEngine {
     for (const p of this.peers.values()) if (p.speaking) othersTalking = true;
     if (othersTalking) threshold += ECHO_GUARD_DB;
     this.thresholdNow = threshold;
-    if (db > threshold) this.lastLoud = now;
+    if (db > threshold) {
+      if (this.aboveSince == null) this.aboveSince = now;
+      // open after sustained sound; once open, any sound above the threshold keeps it open
+      if (now - this.aboveSince >= VAD_ATTACK_MS || this.speaking) this.lastLoud = now;
+    } else {
+      this.aboveSince = null;
+    }
 
     const keyOpen = this.settings.mode === 'ptt'
       ? this.pttHeld || now < this.pttReleaseAt
@@ -531,7 +548,8 @@ class VoiceEngine {
     }
 
     for (const p of this.peers.values()) {
-      const speaking = now - p.lastFrame < SPEAKING_HOLD_MS;
+      if (levelDb(p.pre, p.buf) > REMOTE_SPEAKING_DB) p.lastLoud = now;
+      const speaking = now - (p.lastLoud || 0) < SPEAKING_HOLD_MS;
       if (speaking !== p.speaking) {
         p.speaking = speaking;
         this._changed();
@@ -544,12 +562,16 @@ class VoiceEngine {
   _peer(id) {
     let p = this.peers.get(id);
     if (p) return p;
-    p = { id, speaking: false, lastFrame: 0, ts: 0 };
+    p = { id, speaking: false, lastLoud: 0, ts: 0 };
     this.peers.set(id, p);
     p.player = new AudioWorkletNode(this.ctx, 'w2g-player', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
     p.gain = this.ctx.createGain();
     p.analyser = this.ctx.createAnalyser();
     p.analyser.fftSize = 512;
+    p.pre = this.ctx.createAnalyser(); // before their volume: the ring shows even if you turned them down
+    p.pre.fftSize = 512;
+    p.buf = new Float32Array(p.pre.fftSize);
+    p.player.connect(p.pre);
     p.player.connect(p.gain);
     p.gain.connect(p.analyser);
     p.gain.connect(this.master);

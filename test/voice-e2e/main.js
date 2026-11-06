@@ -150,9 +150,11 @@ app.whenReady().then(async () => {
   const c = await participant(server, 'Cara', speech);
   console.log('voice e2e');
   try {
-    // ---------- phase 1 basics (Chromium's fake mic beep, AI noise removal off) ----------
-    await a.js(`engine.updateSettings({ noiseCancel: 'off' })`);
-    await b.js(`engine.updateSettings({ noiseCancel: 'off' })`);
+    // ---------- phase 1 basics (looping speech, AI noise removal off) ----------
+    // Chromium's fake mic is a short click-like beep, which voice activity rightly ignores,
+    // so the basics talk with real (text-to-speech) speech instead.
+    if (!speech) throw new Error('These tests need Windows text-to-speech for a speech sample');
+    for (const p of [a, b, c]) await p.js(`fakeInput = 'speech'; engine.updateSettings({ noiseCancel: 'off' })`);
 
     await test('both join and see each other', async () => {
       await a.js('engine.join()');
@@ -160,7 +162,7 @@ app.whenReady().then(async () => {
       await until(async () => (await a.js(`!!${a.peer(b)}`)) && (await b.js(`!!${b.peer(a)}`)), 5000, 'peers');
     });
 
-    await test('audio flows both ways (the fake mic beep is heard)', async () => {
+    await test('audio flows both ways', async () => {
       const ab = await heard(b, a, 3000);
       const ba = await heard(a, b, 3000);
       console.log(`       Bob hears Alice at ${ab.toFixed(1)} dB, Alice hears Bob at ${ba.toFixed(1)} dB`);
@@ -286,6 +288,29 @@ app.whenReady().then(async () => {
         }
       });
     }
+
+    await test('keyboard / mouse clicks do not open the mic or light the speaking ring', async () => {
+      try {
+        await c.js(`fakeInput = 'clicks'; engine.updateSettings({ noiseCancel: 'off', autoSensitivity: true })`);
+        await c.js('engine.join()');
+        await until(() => a.js(`!!${a.peer(c)}`), 3000, 'Cara in voice');
+        await wait(800);
+        const lvl = await micLevel(c, 2000);
+        let opened = false;
+        let ring = false;
+        for (let i = 0; i < 60; i++) {
+          if (await c.js('engine.speaking')) opened = true;
+          if (await a.js(`!!${a.peer(c)} && ${a.peer(c)}.speaking`)) ring = true;
+          await wait(50);
+        }
+        console.log(`       clicks peak at ${lvl.max.toFixed(1)} dB; mic opened: ${opened}; Alice saw a ring: ${ring}`);
+        assert(lvl.max > -30, 'the clicks are loud');
+        assert.strictEqual(opened, false, 'mic stays closed');
+        assert.strictEqual(ring, false, 'no false speaking ring');
+      } finally {
+        await c.js('engine.leave(); 0');
+      }
+    });
 
     await test('a broken noise model never leaves the mic dead: it falls back to standard suppression', async () => {
       try {

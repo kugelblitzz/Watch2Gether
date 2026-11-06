@@ -32,6 +32,12 @@ async function makeInput(ctx, kind) {
   const buf = ctx.createBuffer(1, len, ctx.sampleRate);
   const out = buf.getChannelData(0);
   if (speech) out.set(speech.getChannelData(0).subarray(0, len));
+  if (kind === 'clicks') { // keyboard-like clicks: 8 ms loud bursts every 400 ms
+    const burst = Math.round(ctx.sampleRate * 0.008);
+    for (let start = 0; start < len; start += Math.round(ctx.sampleRate * 0.4)) {
+      for (let i = start; i < Math.min(len, start + burst); i++) out[i] = (Math.random() * 2 - 1) * 0.4;
+    }
+  }
   if (kind === 'faint') { // speech at ~-55 dB: like a friend's voice leaking back from speakers
     const s = speech || (await ctx.decodeAudioData((await window.bridge.speechWav()).buffer.slice(0)));
     const d = s.getChannelData(0);
