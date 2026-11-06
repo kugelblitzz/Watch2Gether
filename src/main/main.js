@@ -8,6 +8,14 @@ const { Session } = require('./session');
 const { getTailscaleInfo, findMpv, installMpvWithWinget, lanIp } = require('./env');
 const { parseInvite } = require('./util');
 const { initUpdater, installUpdate } = require('./updater');
+const { Hotkeys } = require('./hotkeys');
+
+const hotkeys = new Hotkeys();
+hotkeys.on('action', (action, down) => send('hotkey', { action, down }));
+hotkeys.on('error', (e) => console.error('[hotkeys]', e && e.message));
+
+/** Noise-suppression model shipped with @sapphi-red/web-noise-suppressor. */
+const NOISE_WASM = { gtcrn: 'gtcrn.wasm' };
 
 
 
@@ -72,6 +80,7 @@ function wireSession(s) {
 }
 
 async function leave() {
+  hotkeys.stop();
   if (session) {
     session.removeAllListeners();
     session.stop();
@@ -200,6 +209,18 @@ function registerIpc() {
   ipcMain.handle('voice:send', (_e, msg) => {
     if (session) session.voiceSend(msg);
   });
+  ipcMain.handle('voice:wasm', (_e, name) => {
+    const file = NOISE_WASM[name];
+    if (!file) throw new Error('Unknown model');
+    const dir = path.dirname(require.resolve('@sapphi-red/web-noise-suppressor'));
+    return fs.readFileSync(path.join(dir, file));
+  });
+  ipcMain.handle('hotkeys:set', (_e, bindings, enabled) => hotkeys.setBindings(bindings, enabled));
+  ipcMain.handle('hotkeys:capture', () => hotkeys.captureNext());
+  ipcMain.handle('hotkeys:cancel', () => hotkeys.cancelCapture());
+  ipcMain.handle('player:duck', (_e, level) => {
+    if (session) session.duck(Number(level));
+  });
   ipcMain.on('voice:audio', (_e, bytes) => {
     if (session && bytes instanceof Uint8Array) session.voiceAudio(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   });
@@ -275,6 +296,7 @@ if (!app.requestSingleInstanceLock()) {
     initUpdater((u) => send('app-update', u), () => !!session);
   });
   app.on('before-quit', () => { leave(); });
+  app.on('will-quit', () => hotkeys.stop());
   app.on('window-all-closed', () => {
     leave();
     app.quit();

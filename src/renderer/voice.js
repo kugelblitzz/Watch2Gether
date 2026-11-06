@@ -3,8 +3,8 @@
 /**
  * Voice chat engine (renderer).
  *
- *   mic -> input volume -> [level meter / voice activity] -> gate -> capture -> Opus encoder
- *        -> lobby connection -> host relays to everyone else in voice ->
+ *   mic -> [AI noise removal] -> input volume -> [level meter / voice activity or push-to-talk]
+ *       -> gate -> capture -> Opus encoder -> lobby connection -> host relays to everyone in voice
  *   Opus decoder -> jitter buffer -> their volume (0-200 %) -> output volume -> speakers
  *
  * Audio rides the existing lobby connection (over Tailscale) instead of direct
@@ -12,7 +12,7 @@
  * adapter, so peer-to-peer would only work on a shared LAN. Frames are only sent
  * while you talk, so silence costs nothing and the speaking ring is exact.
  *
- * Usage: const v = new VoiceEngine({ send, sendAudio, getPeerPrefs });
+ * Usage: const v = new VoiceEngine({ send, sendAudio, loadWasm, getPeerPrefs });
  *        v.onChange = fn; v.handle(jsonMsg); v.handleAudio(bytes)
  */
 
@@ -21,13 +21,25 @@ const VOICE_DEFAULTS = {
   outputDeviceId: 'default',
   inputVolume: 1,          // 0..2
   outputVolume: 1,         // 0..2
+  mode: 'vad',             // 'vad' (voice activity) | 'ptt' (push to talk)
+  pttReleaseMs: 200,       // keep sending this long after the key is released
   autoSensitivity: true,
   threshold: -50,          // dBFS, used when autoSensitivity is off
-  noiseSuppression: true,
+  noiseCancel: 'gtcrn',    // 'off' | 'standard' (Chromium's) | 'gtcrn' (AI: ~45-50 dB off steady room noise)
   echoCancellation: true,
   autoGainControl: true,
+  duck: true,              // lower the movie while friends talk
+  duckAmount: 0.6,         // 0..0.9: how much quieter
   soundCues: true,
   bitrate: 64000,          // Opus, bits/s
+  binds: { ptt: null, mute: null, deafen: null },
+};
+
+// GTCRN (via @sapphi-red/web-noise-suppressor). RNNoise was tried too, but on steady
+// room noise it ranged from 1.5 to 24 dB of reduction between runs; GTCRN gave 44-49 dB
+// every time at a similar, tiny CPU cost.
+const NOISE_PROCESSORS = {
+  gtcrn: '@sapphi-red/web-noise-suppressor/gtcrn',
 };
 
 const SAMPLE_RATE = 48000;
@@ -35,12 +47,20 @@ const FRAME_SAMPLES = 960;       // 20 ms
 const VAD_TICK_MS = 20;
 const VAD_RELEASE_MS = 300;      // keep sending this long after speech, so word endings survive
 const SPEAKING_HOLD_MS = 250;
+const DENOISE_DEAD_TICKS = 75;   // 1.5 s of raw sound but digital silence after the model = model crashed
 const SETTINGS_KEY = 'w2g.voice';
 const AUDIO_MAGIC = 1;           // first byte of a binary voice frame
-const WORKLET_URL = new URL('voice-worklets.js', document.currentScript.src).href;
+const SCRIPT_URL = document.currentScript.src;
+const WORKLET_URL = new URL('voice-worklets.js', SCRIPT_URL).href;
+const NOISE_WORKLET_URL = (name) => new URL(`../../node_modules/@sapphi-red/web-noise-suppressor/dist/${name}/workletProcessor.js`, SCRIPT_URL).href;
 
 function loadVoiceSettings() {
-  try { return { ...VOICE_DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; } catch { return { ...VOICE_DEFAULTS }; }
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { /* defaults */ }
+  if (saved.noiseCancel == null && saved.noiseSuppression === false) saved.noiseCancel = 'off'; // v0.4.0 setting
+  if (saved.noiseCancel && !['off', 'standard', 'gtcrn'].includes(saved.noiseCancel)) saved.noiseCancel = 'gtcrn';
+  delete saved.noiseSuppression;
+  return { ...VOICE_DEFAULTS, ...saved, binds: { ...VOICE_DEFAULTS.binds, ...(saved.binds || {}) } };
 }
 
 function levelDb(analyser, buf) {
@@ -54,24 +74,31 @@ class VoiceEngine {
   /**
    * @param send          (msg) => void            JSON voice-* control message to the lobby server
    * @param sendAudio     (Uint8Array) => void     binary audio frame to the lobby server
+   * @param loadWasm      (name) => Promise<ArrayBuffer|Uint8Array>  noise model bytes ('gtcrn')
    * @param getPeerPrefs  (peerId) => { volume, muted } remembered for that person
    */
-  constructor({ send, sendAudio, getPeerPrefs = () => ({ volume: 1, muted: false }) }) {
+  constructor({ send, sendAudio, loadWasm = null, getPeerPrefs = () => ({ volume: 1, muted: false }) }) {
     this.send = send;
     this.sendAudio = sendAudio;
+    this.loadWasm = loadWasm;
     this.getPeerPrefs = getPeerPrefs;
     this.settings = loadVoiceSettings();
     this.onChange = () => {};
 
     this.joined = false;
     this.joining = false;
+    this.micTest = false;
     this.muted = false;
     this.deafened = false;
+    this.serverMuted = false;  // muted for everyone by the host
     this.micError = null;
-    this.level = -100;        // current mic level, dBFS (for the meter)
+    this.noiseError = null;
+    this.level = -100;         // current mic level, dBFS (for the meter)
     this.thresholdNow = this.settings.threshold;
-    this.speaking = false;    // we are transmitting
-    this.peers = new Map();   // id -> peer
+    this.speaking = false;     // the gate is open (we are heard / would be heard)
+    this.pttHeld = false;
+    this.pttReleaseAt = 0;
+    this.peers = new Map();    // id -> peer
 
     this.ctx = null;
     this.noiseFloor = -70;
@@ -79,6 +106,7 @@ class VoiceEngine {
     this.vadTimer = null;
     this.seq = 0;
     this.ts = 0;
+    this.wasmCache = {};
   }
 
   // ---------- public API ----------
@@ -87,13 +115,12 @@ class VoiceEngine {
     if (this.joined || this.joining) return;
     this.joining = true;
     try {
-      await this._buildGraph();
-      await this._startMic();
+      await this._ensureMic();
       this._startEncoder();
       this.joined = true;
+      this.serverMuted = false;
       this.send({ type: 'voice-join' });
       this._sendState();
-      this.vadTimer = setInterval(() => this._tick(), VAD_TICK_MS);
       this._cue('join');
     } finally {
       this.joining = false;
@@ -119,7 +146,9 @@ class VoiceEngine {
 
   /** Leaving the lobby: drop everything without telling a server that's gone. */
   shutdown() {
+    this.micTest = false;
     if (this.joined) this._teardown();
+    else this._releaseMic();
   }
 
   setMuted(muted) {
@@ -139,18 +168,45 @@ class VoiceEngine {
     this._changed();
   }
 
-  /** Change settings; restarts the mic only if a mic-side option changed. */
+  /** The host muted / unmuted us for everyone (from the member list). */
+  setServerMuted(on) {
+    if (this.serverMuted === !!on) return;
+    this.serverMuted = !!on;
+    if (this.joined) this._cue(on ? 'mute' : 'unmute');
+    this._changed();
+  }
+
+  /** Push-to-talk key went down / up. */
+  setPttHeld(down) {
+    if (down) this.pttHeld = true;
+    else if (this.pttHeld) {
+      this.pttHeld = false;
+      this.pttReleaseAt = performance.now() + this.settings.pttReleaseMs;
+    }
+  }
+
+  /** "Mic test": hear yourself exactly as others would (processing + gate), without joining. */
+  async setMicTest(on) {
+    this.micTest = !!on;
+    if (this.micTest) await this._ensureMic();
+    if (this.monitor) this.monitor.gain.setTargetAtTime(this.micTest ? 1 : 0, this.ctx.currentTime, 0.02);
+    if (!this.micTest && !this.joined) this._releaseMic();
+    this._changed();
+  }
+
+  /** Change settings; rebuilds only what the change affects. */
   async updateSettings(patch) {
     const before = this.settings;
-    this.settings = { ...before, ...patch };
+    this.settings = { ...before, ...patch, binds: { ...before.binds, ...(patch.binds || {}) } };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings));
-    if (!this.ctx) return this._changed();
-    const micKeys = ['inputDeviceId', 'noiseSuppression', 'echoCancellation', 'autoGainControl'];
-    if (this.joined && micKeys.some((k) => before[k] !== this.settings[k])) await this._startMic();
-    if (before.outputDeviceId !== this.settings.outputDeviceId) await this._applySink();
-    if (this.joined && before.bitrate !== this.settings.bitrate) this._startEncoder();
-    this.inGain.gain.value = this.settings.inputVolume;
-    this._applyOutput();
+    if (this.ctx) {
+      const micKeys = ['inputDeviceId', 'noiseCancel', 'echoCancellation', 'autoGainControl'];
+      if (this.mic && micKeys.some((k) => before[k] !== this.settings[k])) await this._startMic();
+      if (before.outputDeviceId !== this.settings.outputDeviceId) await this._applySink();
+      if (this.joined && before.bitrate !== this.settings.bitrate) this._startEncoder();
+      this.inGain.gain.value = this.settings.inputVolume;
+      this._applyOutput();
+    }
     this._changed();
   }
 
@@ -180,7 +236,23 @@ class VoiceEngine {
     return out;
   }
 
-  /** JSON message from the lobby server (voice-peers / voice-peer-joined / voice-peer-left). */
+  /** Is anyone we can hear talking right now? (for ducking the movie) */
+  othersTalking() {
+    if (!this.joined || this.deafened) return false;
+    for (const p of this.peers.values()) {
+      if (!p.speaking) continue;
+      const pref = this.getPeerPrefs(p.id) || {};
+      if (!pref.muted && pref.volume !== 0) return true;
+    }
+    return false;
+  }
+
+  /** Can we be heard if we talk? */
+  get canTalk() {
+    return this.joined && !!this.micSrc && !this.muted && !this.deafened && !this.serverMuted;
+  }
+
+  /** JSON message from the lobby server. */
   handle(msg) {
     if (!this.joined) return;
     switch (msg.type) {
@@ -193,6 +265,11 @@ class VoiceEngine {
       case 'voice-peer-left':
         this._closePeer(msg.id);
         break;
+      case 'voice-kicked':
+        this._cue('leave');
+        this._teardown();
+        this.onKicked && this.onKicked();
+        return;
       default:
         return;
     }
@@ -216,6 +293,12 @@ class VoiceEngine {
 
   // ---------- audio graph ----------
 
+  async _ensureMic() {
+    await this._buildGraph();
+    if (!this.mic) await this._startMic(); // retried each time, e.g. after plugging a mic in
+    if (!this.vadTimer) this.vadTimer = setInterval(() => this._tick(), VAD_TICK_MS);
+  }
+
   async _buildGraph() {
     if (this.ctx) return;
     const ctx = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: 'interactive' });
@@ -230,8 +313,12 @@ class VoiceEngine {
     this.gate.gain.value = 0;
     this.capture = new AudioWorkletNode(ctx, 'w2g-capture', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit' });
     this.capture.port.onmessage = (e) => this._encode(e.data);
+    this.monitor = ctx.createGain(); // mic test: hear yourself after processing + gate
+    this.monitor.gain.value = 0;
     this.inGain.connect(this.analyser);
-    this.inGain.connect(this.gate).connect(this.capture);
+    this.inGain.connect(this.gate);
+    this.gate.connect(this.capture);
+    this.gate.connect(this.monitor).connect(ctx.destination);
 
     this.master = ctx.createGain();
     this.master.connect(ctx.destination);
@@ -244,15 +331,12 @@ class VoiceEngine {
 
   async _startMic() {
     const s = this.settings;
-    if (this.mic) this.mic.getTracks().forEach((t) => t.stop());
-    if (this.micSrc) this.micSrc.disconnect();
-    this.mic = null;
-    this.micSrc = null;
+    this._disconnectMic();
     const constraints = {
       audio: {
         deviceId: s.inputDeviceId && s.inputDeviceId !== 'default' ? { exact: s.inputDeviceId } : undefined,
         echoCancellation: s.echoCancellation,
-        noiseSuppression: s.noiseSuppression,
+        noiseSuppression: s.noiseCancel === 'standard',
         autoGainControl: s.autoGainControl,
         channelCount: 1,
       },
@@ -273,7 +357,83 @@ class VoiceEngine {
     }
     this.micError = null;
     this.micSrc = this.ctx.createMediaStreamSource(this.mic);
+    this.rawAnalyser = this.ctx.createAnalyser();
+    this.rawAnalyser.fftSize = 1024;
+    this.micSrc.connect(this.rawAnalyser);
+    this.deadTicks = 0;
+    this.denoise = await this._makeDenoiser(s.noiseCancel);
+    if (this.denoise) this.micSrc.connect(this.denoise).connect(this.inGain);
+    else this.micSrc.connect(this.inGain);
+  }
+
+  /** AI noise removal node, or null (off / standard / failed to load -> falls back to Chromium's). */
+  async _makeDenoiser(kind) {
+    this.noiseError = null;
+    const proc = NOISE_PROCESSORS[kind];
+    if (!proc) return null;
+    try {
+      if (!this.loadWasm) throw new Error('no model loader');
+      const file = kind;
+      if (!this.wasmCache[file]) {
+        const bytes = await this.loadWasm(file);
+        this.wasmCache[file] = bytes instanceof ArrayBuffer ? bytes : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        await this.ctx.audioWorklet.addModule(NOISE_WORKLET_URL(kind));
+      }
+      const node = new AudioWorkletNode(this.ctx, proc, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        channelCount: 1,
+        channelCountMode: 'explicit',
+        outputChannelCount: [1],
+        processorOptions: { maxChannels: 1, wasmBinary: this.wasmCache[file].slice(0) },
+      });
+      // If the model crashes on the audio thread its output goes silent: never leave the mic dead.
+      node.onprocessorerror = () => this._denoiserFailed(node);
+      return node;
+    } catch (e) {
+      console.error('[voice] noise model', e);
+      this._useStandardNoiseSuppression();
+      return null;
+    }
+  }
+
+  _denoiserFailed(node) {
+    if (this.denoise !== node || !this.micSrc) return;
+    console.error('[voice] noise model crashed; bypassing it');
+    this.micSrc.disconnect();
+    node.disconnect();
+    this.denoise = null;
     this.micSrc.connect(this.inGain);
+    this._useStandardNoiseSuppression();
+    this._changed();
+  }
+
+  _useStandardNoiseSuppression() {
+    this.noiseError = 'AI noise cancellation could not start; using standard noise suppression.';
+    if (this.mic) this.mic.getAudioTracks().forEach((t) => t.applyConstraints({ noiseSuppression: true }).catch(() => {}));
+  }
+
+  _disconnectMic() {
+    if (this.mic) this.mic.getTracks().forEach((t) => t.stop());
+    if (this.micSrc) this.micSrc.disconnect();
+    if (this.denoise) {
+      this.denoise.disconnect();
+      this.denoise.port.postMessage('destroy');
+    }
+    this.mic = null;
+    this.micSrc = null;
+    this.denoise = null;
+  }
+
+  _releaseMic() {
+    if (this.micTest) return;
+    clearInterval(this.vadTimer);
+    this.vadTimer = null;
+    this._disconnectMic();
+    this.micError = null;
+    this.speaking = false;
+    if (this.gate) this.gate.gain.value = 0;
+    this.level = -100;
   }
 
   _startEncoder() {
@@ -298,7 +458,7 @@ class VoiceEngine {
   }
 
   _encode(frame) {
-    if (!this.encoder || this.encoder.state !== 'configured' || !this.speaking) return;
+    if (!this.joined || !this.encoder || this.encoder.state !== 'configured' || !this.canTalk) return;
     const data = new AudioData({ format: 'f32-planar', sampleRate: SAMPLE_RATE, numberOfFrames: FRAME_SAMPLES, numberOfChannels: 1, timestamp: this.ts, data: frame });
     this.ts += 20000;
     this.encoder.encode(data);
@@ -321,12 +481,19 @@ class VoiceEngine {
     this.cueGain.gain.value = Math.min(1, this.settings.outputVolume) * 0.35;
   }
 
-  /** Voice activity + speaking detection, every 20 ms. */
+  /** Voice activity / push-to-talk + speaking detection, every 20 ms. */
   _tick() {
     if (!this.ctx) return;
     const now = performance.now();
     const db = this.micSrc ? levelDb(this.analyser, this.levelBuf) : -100;
     this.level = db;
+
+    // Watchdog: a noise model that failed to start inside the audio thread outputs pure silence.
+    if (this.denoise && db < -150 && levelDb(this.rawAnalyser, this.levelBuf) > -70) {
+      if (++this.deadTicks >= DENOISE_DEAD_TICKS) this._denoiserFailed(this.denoise);
+    } else {
+      this.deadTicks = 0;
+    }
 
     let threshold = this.settings.threshold;
     if (this.settings.autoSensitivity) {
@@ -337,11 +504,16 @@ class VoiceEngine {
     }
     this.thresholdNow = threshold;
     if (db > threshold) this.lastLoud = now;
-    const transmit = this.joined && !!this.micSrc && !this.muted && !this.deafened && now - this.lastLoud < VAD_RELEASE_MS;
-    if (transmit !== this.speaking) {
-      this.speaking = transmit;
-      this.gate.gain.setTargetAtTime(transmit ? 1 : 0, this.ctx.currentTime, transmit ? 0.004 : 0.03);
-      this.capture.port.postMessage({ tx: transmit });
+
+    const keyOpen = this.settings.mode === 'ptt'
+      ? this.pttHeld || now < this.pttReleaseAt
+      : now - this.lastLoud < VAD_RELEASE_MS;
+    const allowed = this.joined ? this.canTalk : this.micTest && !!this.micSrc;
+    const open = allowed && keyOpen;
+    if (open !== this.speaking) {
+      this.speaking = open;
+      this.gate.gain.setTargetAtTime(open ? 1 : 0, this.ctx.currentTime, open ? 0.004 : 0.03);
+      this.capture.port.postMessage({ tx: open && this.joined });
       this._changed();
     }
 
@@ -405,19 +577,13 @@ class VoiceEngine {
 
   _teardown() {
     this.joined = false;
-    clearInterval(this.vadTimer);
-    this.vadTimer = null;
+    this.serverMuted = false;
+    this.pttHeld = false;
     for (const id of [...this.peers.keys()]) this._closePeer(id);
     if (this.encoder && this.encoder.state !== 'closed') this.encoder.close();
     this.encoder = null;
-    if (this.mic) this.mic.getTracks().forEach((t) => t.stop());
-    this.mic = null;
-    if (this.micSrc) this.micSrc.disconnect();
-    this.micSrc = null;
-    this.speaking = false;
-    if (this.gate) this.gate.gain.value = 0;
     if (this.capture) this.capture.port.postMessage({ tx: false });
-    this.level = -100;
+    this._releaseMic();
     this._changed();
   }
 

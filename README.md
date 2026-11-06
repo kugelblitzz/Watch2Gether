@@ -38,15 +38,18 @@ When the video ends, the room pauses on the last frame. Press play to watch it a
 
 ## Voice chat
 
-Click **Join voice** in the lobby to talk while you watch. It's optional, and everyone else keeps watching either way.
+Click **Join voice** in the lobby to talk while you watch. It's optional, and everyone else keeps watching either way. The ⚙ next to it opens **Voice & Audio** settings, including a **mic test** so you can hear yourself the way friends will before joining.
 
-- **Voice activity:** your mic only sends while you talk. Adjust the sensitivity under ⚙ → *Input sensitivity*, or leave it on automatic.
-- **Mute / deafen:** the mic and headphones buttons, or **Ctrl+Shift+M** / **Ctrl+Shift+D**.
-- **Per-person volume:** click someone in the lobby to set their volume (0–200 %) or mute them just for you. It's remembered by name.
-- **Settings (⚙):** input/output device, input/output volume, noise suppression, echo cancellation, automatic gain, voice quality (32–128 kbps), sound cues.
+- **Voice activity** (default): your mic only sends while you talk. Sensitivity is automatic, or set it yourself with the live meter.
+- **Push to talk**: pick any key or the middle / side mouse buttons. It works anywhere, even while the player is fullscreen, with an adjustable release delay so word endings aren't cut off.
+- **AI noise cancellation** (on by default): removes fans, keyboards and room noise (about 45 dB off steady background noise) while keeping your voice. *Standard* and *Off* are also available.
+- **Movie ducking**: the movie gets quieter while friends talk (adjustable, or off). Your own player volume isn't touched.
+- **Mute / deafen**: the buttons, **Ctrl+Shift+M** / **Ctrl+Shift+D** in the app, or global keys you choose under *Keybinds*.
+- **Per-person volume**: click someone in the lobby to set their volume (0–200 %) or mute them just for you. It's remembered by name.
+- **Host tools**: the host can **mute someone for everyone** (it sticks if they rejoin) or **disconnect them from voice**.
 - **Use headphones** if you can: the movie plays in mpv, outside the voice engine, so with speakers your friends may hear it through your mic.
 
-Voice goes over the same Tailscale connection as the lobby: the host relays each person's voice (Opus, ~64 kbps, only while they talk) to everyone else in voice.
+Voice goes over the same Tailscale connection as the lobby: the host relays each person's voice (Opus, ~64 kbps, only while they talk) to everyone else in voice. Global keys use a keyboard/mouse hook that only runs while you're in voice and only reacts to the keys you've bound.
 
 ## Updates
 
@@ -80,6 +83,7 @@ npm install
 npm start        # run the app
 npm test         # sync engine tests (real server + sessions, simulated player)
 npm run test:mpv -- <video>   # same, with two real mpv players (opens windows)
+npm run test:voice            # voice chat end-to-end in hidden, silent windows
 npm run dist     # build dist/Watch2Gether-Setup-<version>.exe
 ```
 

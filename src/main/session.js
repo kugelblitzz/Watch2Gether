@@ -85,6 +85,7 @@ class Session extends EventEmitter {
     for (const t of this.timers) clearInterval(t);
     clearTimeout(this.bufferTimer);
     clearTimeout(this.reconnectTimer);
+    clearInterval(this.duckTimer);
     try { if (this.ws) this.ws.close(); } catch { /* ignore */ }
     if (this.mpv) this.mpv.quit();
   }
@@ -214,6 +215,7 @@ class Session extends EventEmitter {
       case 'voice-peers':
       case 'voice-peer-joined':
       case 'voice-peer-left':
+      case 'voice-kicked':
         this.emit('voice', msg); // handled by the renderer's voice engine
         break;
       default:
@@ -282,9 +284,36 @@ class Session extends EventEmitter {
       case 'voice-state':
         this._send({ type: 'voice-state', muted: !!msg.muted, deafened: !!msg.deafened });
         break;
+      case 'voice-mod':
+        if (typeof msg.target === 'string' && ['mute', 'unmute', 'kick'].includes(msg.action)) {
+          this._send({ type: 'voice-mod', target: msg.target, action: msg.action });
+        }
+        break;
       default:
         break;
     }
+  }
+
+  /**
+   * Lower the movie while friends talk (1 = normal). Ramps over ~200 ms so it
+   * doesn't click, and leaves the user's own mpv volume untouched.
+   */
+  duck(level) {
+    if (!Number.isFinite(level)) return;
+    const target = Math.max(0, Math.min(1, level));
+    const from = this.duckLevel == null ? 1 : this.duckLevel;
+    this.duckLevel = target;
+    clearInterval(this.duckTimer);
+    let step = 0;
+    const steps = 5;
+    const apply = () => {
+      step++;
+      const v = from + ((target - from) * step) / steps;
+      if (this.mpv && this.playerOpen) this.mpv.command('af-command', 'w2gduck', 'volume', v.toFixed(3), 'volume').catch(() => {});
+      if (step >= steps) clearInterval(this.duckTimer);
+    };
+    apply();
+    this.duckTimer = setInterval(apply, 40);
   }
 
   /** One encoded voice frame from the renderer (binary, relayed by the host). */

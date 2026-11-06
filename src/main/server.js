@@ -66,6 +66,7 @@ class HostServer extends EventEmitter {
     this.lastBytes = 0;
     this.uploadMbps = 0;
     this.membersDirty = true;
+    this.serverMutedNames = new Set(); // host mutes stick across leave/rejoin and reconnects
   }
 
   // ---------- lifecycle ----------
@@ -270,7 +271,7 @@ class HostServer extends EventEmitter {
         drift: c.drift,
         source: c.source,
         rtt: c.rtt,
-        voice: c.voice && { muted: c.voice.muted, deafened: c.voice.deafened },
+        voice: c.voice && { muted: c.voice.muted, deafened: c.voice.deafened, serverMuted: c.voice.serverMuted },
       }));
     return { type: 'members', list, stats: { uploadMbps: this.uploadMbps, viewers: list.filter((c) => !c.isHost).length } };
   }
@@ -369,7 +370,7 @@ class HostServer extends EventEmitter {
       drift: 0,
       source: null,
       rtt: null,
-      voice: null, // { muted, deafened } while in voice chat
+      voice: null, // { muted, deafened, serverMuted } while in voice chat
     };
     this.clients.set(client.id, client);
     const helloTimer = setTimeout(() => {
@@ -457,6 +458,24 @@ class HostServer extends EventEmitter {
       case 'voice-leave':
         if (client.voice) this._voiceLeave(client, false);
         break;
+      case 'voice-mod': {
+        // Host moderation: mute someone for everyone, or remove them from voice.
+        const target = client.isHost && typeof msg.target === 'string' ? this.clients.get(msg.target) : null;
+        if (!target || !target.voice || target === client) return;
+        if (msg.action === 'mute' || msg.action === 'unmute') {
+          target.voice.serverMuted = msg.action === 'mute';
+          if (target.voice.serverMuted) this.serverMutedNames.add(target.name);
+          else this.serverMutedNames.delete(target.name);
+          this._event(`${client.name} ${target.voice.serverMuted ? 'muted' : 'unmuted'} ${target.name} for everyone`);
+          this._flushMembers();
+        } else if (msg.action === 'kick') {
+          this._send(target, { type: 'voice-kicked', by: client.name });
+          this._voiceLeave(target, true);
+          this._event(`${client.name} disconnected ${target.name} from voice`);
+          this._flushMembers();
+        }
+        break;
+      }
       case 'voice-state':
         if (!client.voice) return;
         client.voice.muted = !!msg.muted;
@@ -473,7 +492,7 @@ class HostServer extends EventEmitter {
   /** Relay one talker's Opus frame to everyone else in voice who can hear it. */
   _onVoiceFrame(client, data) {
     const v = client.voice;
-    if (!v || v.muted || v.deafened) return;
+    if (!v || v.muted || v.deafened || v.serverMuted) return;
     if (data.length < 6 || data.length > MAX_VOICE_FRAME || data[0] !== VOICE_MAGIC) return;
     const out = Buffer.allocUnsafe(data.length + 8);
     out[0] = VOICE_MAGIC;
@@ -491,7 +510,7 @@ class HostServer extends EventEmitter {
   }
 
   _voiceJoin(client) {
-    client.voice = { muted: false, deafened: false };
+    client.voice = { muted: false, deafened: false, serverMuted: this.serverMutedNames.has(client.name) };
     // The newcomer makes the offers; everyone already in voice waits for them (no glare).
     this._send(client, { type: 'voice-peers', peers: this._voicePeers(client).map((c) => c.id) });
     for (const c of this._voicePeers(client)) this._send(c, { type: 'voice-peer-joined', id: client.id });

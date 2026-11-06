@@ -48,6 +48,7 @@ class FakeMpv extends EventEmitter {
         setTimeout(() => { this._setProp('duration', 600); this.emit('event', { event: 'file-loaded' }); }, 50);
         return null;
       case 'seek': this._seekTo(Number(args[0])); return null;
+      case 'af-command': (this.afCommands = this.afCommands || []).push(args); return null;
       default: return null;
     }
   }
@@ -368,6 +369,68 @@ async function test(name, fn) {
     guest.voiceSend({ type: 'voice-leave' });
     await until(() => guestMsgs.some((m) => m.type === 'voice-peer-left'), 1000, 'host left voice');
     assert.strictEqual(hostGot.length, 1);
+  });
+
+  await test('host moderation: mute for everyone (sticks across rejoin) and disconnect from voice', async () => {
+    const mp = port + 4;
+    const ms = new HostServer({ port: mp });
+    await ms.start();
+    const connect = (name, hostToken) => new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${mp}/ws?k=${ms.code}`);
+      const c = { ws, msgs: [], audio: [], id: null };
+      ws.on('message', (d, bin) => {
+        if (bin) { c.audio.push(Buffer.from(d)); return; }
+        const m = JSON.parse(d); c.msgs.push(m); if (m.type === 'welcome') { c.id = m.clientId; resolve(c); }
+      });
+      ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', name, hostToken })));
+    });
+    const send = (c, m) => c.ws.send(JSON.stringify(m));
+    const frame = Buffer.from([1, 0, 0, 0, 1, 7, 7]);
+    const voiceOf = (c, who) => (c.msgs.filter((m) => m.type === 'members').pop() || { list: [] }).list.find((x) => x.id === who.id)?.voice;
+    const h = await connect('Host', ms.hostToken);
+    const g = await connect('Gus');
+    const t = await connect('Tia');
+    for (const c of [h, g, t]) send(c, { type: 'voice-join' });
+    await until(() => ms._voicePeers(null).length === 3, 1000, 'all in voice');
+
+    send(g, { type: 'voice-mod', target: t.id, action: 'mute' }); // not the host: ignored
+    await wait(150);
+    assert.strictEqual(ms.clients.get(t.id).voice.serverMuted, false, 'guests cannot moderate');
+
+    send(h, { type: 'voice-mod', target: t.id, action: 'mute' });
+    await until(() => voiceOf(g, t) && voiceOf(g, t).serverMuted, 1000, 'everyone sees Tia muted by host');
+    t.ws.send(frame, { binary: true });
+    await wait(150);
+    assert.strictEqual(g.audio.length, 0, 'server drops a host-muted talker');
+
+    send(t, { type: 'voice-leave' });
+    send(t, { type: 'voice-join' });
+    await until(() => voiceOf(g, t) && voiceOf(g, t).serverMuted, 1000, 'still muted after rejoining');
+
+    send(h, { type: 'voice-mod', target: t.id, action: 'unmute' });
+    await until(() => voiceOf(g, t) && !voiceOf(g, t).serverMuted, 1000, 'unmuted');
+    t.ws.send(frame, { binary: true });
+    await until(() => g.audio.length === 1, 1000, 'Tia heard again');
+
+    send(h, { type: 'voice-mod', target: g.id, action: 'kick' });
+    await until(() => g.msgs.some((m) => m.type === 'voice-kicked' && m.by === 'Host'), 1000, 'Gus told');
+    await until(() => !ms.clients.get(g.id).voice, 1000, 'Gus out of voice');
+    assert(t.msgs.some((m) => m.type === 'voice-peer-left' && m.id === g.id), 'others drop Gus');
+    assert(g.ws.readyState === 1, 'Gus is still in the lobby, just not in voice');
+    for (const c of [h, g, t]) c.ws.close();
+    ms.stop();
+  });
+
+  await test('ducking the movie ramps the player\'s duck filter, separate from the user volume', async () => {
+    hm.afCommands = [];
+    host.duck(0.4);
+    await wait(300);
+    const last = hm.afCommands[hm.afCommands.length - 1];
+    assert.deepStrictEqual(last, ['w2gduck', 'volume', '0.400', 'volume']);
+    assert(hm.afCommands.length >= 3, 'ramped in steps, not one jump');
+    host.duck(1);
+    await wait(300);
+    assert.deepStrictEqual(hm.afCommands[hm.afCommands.length - 1], ['w2gduck', 'volume', '1.000', 'volume']);
   });
 
   await test('host changes video -> everyone reloads, paused at 0', async () => {

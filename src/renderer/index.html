@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:">
   <title>Watch2Gether</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -118,10 +118,15 @@
           <div id="hostStats" class="stats"></div>
 
           <div id="voiceBar" class="voice-bar">
-            <button id="voiceJoin" class="voice-join">
-              <svg class="vi" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>
-              Join voice
-            </button>
+            <div id="voiceJoinRow" class="voice-join-row">
+              <button id="voiceJoin" class="voice-join">
+                <svg class="vi" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>
+                Join voice
+              </button>
+              <button id="voiceSettingsBtn2" class="icon-btn" title="Voice &amp; audio settings" aria-label="Voice settings">
+                <svg class="vi" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+              </button>
+            </div>
             <div id="voiceControls" class="voice-controls hidden">
               <div id="voiceStatus" class="voice-status">
                 <span class="vs-dot"></span>
@@ -143,7 +148,7 @@
               </div>
             </div>
             <div id="voiceTip" class="voice-tip hidden">
-              <span>Using speakers? Friends may hear the movie through your mic. Headphones work best.</span>
+              <span id="voiceTipText">Using speakers? Friends may hear the movie through your mic. Headphones work best.</span>
               <button id="voiceTipClose" class="icon-btn small" aria-label="Dismiss">×</button>
             </div>
           </div>
@@ -175,6 +180,10 @@
     <input type="range" id="pmVol" class="slider" min="0" max="200" step="1">
     <label class="check"><input type="checkbox" id="pmMute"> Mute for me</label>
     <button id="pmReset" class="small">Reset</button>
+    <div id="pmHost" class="pm-host hidden">
+      <label class="check"><input type="checkbox" id="pmServerMute"> Mute for everyone</label>
+      <button id="pmKick" class="danger small">Disconnect from voice</button>
+    </div>
   </div>
 
   <!-- voice settings sheet -->
@@ -191,18 +200,54 @@
         <label class="field"><span>Input volume <output data-for="vsInVol"></output></span><input type="range" id="vsInVol" class="slider" min="0" max="200"></label>
         <label class="field"><span>Output volume <output data-for="vsOutVol"></output></span><input type="range" id="vsOutVol" class="slider" min="0" max="200"></label>
       </div>
+      <div class="mic-test">
+        <button id="vsMicTest">Let's check</button>
+        <span class="muted small">Mic test: hear yourself the way your friends will, with all processing applied.</span>
+      </div>
 
-      <h3>Input sensitivity</h3>
-      <label class="check"><input type="checkbox" id="vsAuto"> Automatically determine input sensitivity</label>
-      <div id="vsMeter" class="meter"><div id="vsMeterFill" class="meter-fill"></div><div id="vsMeterMark" class="meter-mark"></div></div>
-      <div class="pm-row"><span class="muted small" id="vsMeterHint"></span><output class="muted small" data-for="vsThreshold"></output></div>
-      <input type="range" id="vsThreshold" class="slider" min="-100" max="0" step="1">
-      <p class="muted small">Voice activity: your mic only sends while you talk. The bar turns green when you'd be heard.</p>
+      <h3>Input mode</h3>
+      <div class="segmented" role="radiogroup">
+        <button id="vsModeVad" role="radio">Voice activity</button>
+        <button id="vsModePtt" role="radio">Push to talk</button>
+      </div>
+
+      <div id="vsVadBox">
+        <label class="check"><input type="checkbox" id="vsAuto"> Automatically determine input sensitivity</label>
+        <div id="vsMeter" class="meter"><div id="vsMeterFill" class="meter-fill"></div><div id="vsMeterMark" class="meter-mark"></div></div>
+        <div class="pm-row"><span class="muted small" id="vsMeterHint"></span><output class="muted small" data-for="vsThreshold"></output></div>
+        <input type="range" id="vsThreshold" class="slider" min="-100" max="0" step="1">
+        <p class="muted small">Your mic only sends while you talk. The bar turns green when you'd be heard.</p>
+      </div>
+
+      <div id="vsPttBox" class="hidden">
+        <div class="bind-row">
+          <span>Push-to-talk key</span>
+          <button id="vsBindPtt" class="bind" data-action="ptt"></button>
+        </div>
+        <label class="field"><span>Release delay <output data-for="vsPttDelay"></output></span><input type="range" id="vsPttDelay" class="slider" min="0" max="1000" step="20"></label>
+        <p class="muted small">Works anywhere, even while the player is fullscreen. Any key, or the middle / side mouse buttons.</p>
+      </div>
 
       <h3>Voice processing</h3>
-      <label class="check"><input type="checkbox" id="vsNs"> Noise suppression</label>
+      <label class="field"><span>Noise cancellation</span>
+        <select id="vsNoise">
+          <option value="gtcrn">AI noise cancellation (recommended)</option>
+          <option value="standard">Standard noise suppression</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
+      <div id="vsNoiseErr" class="muted small hidden"></div>
       <label class="check"><input type="checkbox" id="vsEc"> Echo cancellation</label>
       <label class="check"><input type="checkbox" id="vsAgc"> Automatic gain control</label>
+
+      <h3>Movie</h3>
+      <label class="check"><input type="checkbox" id="vsDuck"> Lower the movie while friends talk</label>
+      <label class="field"><span>Lower by <output data-for="vsDuckAmt"></output></span><input type="range" id="vsDuckAmt" class="slider" min="10" max="90" step="5"></label>
+
+      <h3>Keybinds</h3>
+      <div class="bind-row"><span>Toggle mute</span><span><button id="vsBindMute" class="bind" data-action="mute"></button><button class="icon-btn small bind-clear" data-clear="mute" aria-label="Clear">×</button></span></div>
+      <div class="bind-row"><span>Toggle deafen</span><span><button id="vsBindDeafen" class="bind" data-action="deafen"></button><button class="icon-btn small bind-clear" data-clear="deafen" aria-label="Clear">×</button></span></div>
+      <p class="muted small">Global keys work while the player has focus. Ctrl+Shift+M and Ctrl+Shift+D always work in this window.</p>
 
       <h3>Other</h3>
       <div class="sheet-grid">

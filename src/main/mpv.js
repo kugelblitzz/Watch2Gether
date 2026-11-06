@@ -25,7 +25,7 @@ class Mpv extends EventEmitter {
     this.exited = false;
   }
 
-  async start({ title = 'Watch2Gether' } = {}) {
+  async start({ title = 'Watch2Gether', extraArgs = [] } = {}) {
     this.pipe = `\\\\.\\pipe\\w2g-mpv-${process.pid}-${Date.now().toString(36)}`;
     const args = [
       '--idle=yes',
@@ -46,6 +46,10 @@ class Mpv extends EventEmitter {
       '--resume-playback=no',
       '--title=' + title + ' - ${media-title}',
       '--no-terminal',
+      // A volume stage we control separately from the user's own volume (9/0 keys):
+      // voice chat lowers it while friends talk ("ducking").
+      '--af=@w2gduck:lavfi=[volume=1]',
+      ...extraArgs,
     ];
     this.proc = spawn(this.exe, args, { stdio: 'ignore', windowsHide: false });
     this.proc.on('error', (err) => {

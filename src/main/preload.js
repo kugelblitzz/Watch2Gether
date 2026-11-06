@@ -25,6 +25,12 @@ contextBridge.exposeInMainWorld('w2g', {
   voiceSend: (msg) => ipcRenderer.invoke('voice:send', msg),
   onVoice: (cb) => ipcRenderer.on('voice', (_e, msg) => cb(msg)),
   voiceAudio: (bytes) => ipcRenderer.send('voice:audio', bytes),
+  voiceWasm: (name) => ipcRenderer.invoke('voice:wasm', name),
+  hotkeysSet: (bindings, enabled) => ipcRenderer.invoke('hotkeys:set', bindings, enabled),
+  hotkeyCapture: () => ipcRenderer.invoke('hotkeys:capture'),
+  hotkeyCancel: () => ipcRenderer.invoke('hotkeys:cancel'),
+  onHotkey: (cb) => ipcRenderer.on('hotkey', (_e, h) => cb(h)),
+  duck: (level) => ipcRenderer.invoke('player:duck', level),
   onVoiceAudio: (cb) => ipcRenderer.on('voice-audio', (_e, bytes) => cb(bytes)),
   onEnded: (cb) => ipcRenderer.on('ended', (_e, reason) => cb(reason)),
 });

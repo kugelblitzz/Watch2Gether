@@ -524,3 +524,34 @@ output { font-variant-numeric: tabular-nums; }
 }
 .meter.open .meter-fill { background: var(--ok); }
 .meter-mark { --pct: 50%; position: absolute; top: -2px; bottom: -2px; left: var(--pct); width: 2px; background: #fff; border-radius: 2px; transition: left .3s var(--ease); }
+
+/* voice phase 2-4 */
+.voice-join-row { display: flex; gap: 6px; align-items: center; }
+.voice-join-row .voice-join { flex: 1; }
+.voice-join-row .icon-btn { width: 40px; height: 40px; border-radius: 999px; background: var(--fill); }
+.vi.server-muted { color: var(--bad); }
+
+.segmented { display: inline-flex; padding: 3px; gap: 2px; border-radius: 12px; background: var(--fill); margin-bottom: 14px; }
+.segmented button { background: transparent; border-radius: 9px; padding: 7px 16px; color: var(--muted); }
+.segmented button:hover { background: rgba(255, 255, 255, .06); }
+.segmented button.active { background: rgba(255, 255, 255, .16); color: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, .3); }
+
+.bind-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 10px; }
+.bind-row > span:last-child { display: inline-flex; align-items: center; gap: 4px; }
+button.bind {
+  min-width: 140px; padding: 7px 14px; border-radius: 10px;
+  font: 13px ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  background: rgba(0, 0, 0, .3); border: 1px solid var(--hairline-2);
+}
+button.bind.unset { color: var(--faint); font-family: inherit; }
+button.bind.capturing {
+  color: var(--accent-2); border-color: var(--accent); font-family: inherit;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.mic-test { display: flex; align-items: center; gap: 12px; margin: 2px 0 6px; }
+.mic-test button { flex: none; }
+
+.pm-host { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+.pm-host button { align-self: flex-start; padding: 4px 12px; font-size: 12px; }
+#vsNoiseErr { margin: -6px 0 8px; color: var(--warn); }
