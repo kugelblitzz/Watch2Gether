@@ -433,6 +433,45 @@ async function test(name, fn) {
     assert.deepStrictEqual(hm.afCommands[hm.afCommands.length - 1], ['w2gduck', 'volume', '1.000', 'volume']);
   });
 
+  await test('lobby without a video: talk first, players open only once the host picks one', async () => {
+    const ep = port + 5;
+    const es = new HostServer({ port: ep });
+    await es.start();
+    const base2 = `http://127.0.0.1:${ep}`;
+    const before = FakeMpv.instances.length;
+    const h2 = new Session({ baseUrl: base2, code: es.code, name: 'H', hostToken: es.hostToken, mpvPath: 'fake', resolveLocal: (m) => (es.media && m.id === es.media.id ? es.media.path : null) });
+    const g2 = new Session({ baseUrl: base2, code: es.code, name: 'G', mpvPath: 'fake' });
+    await h2.start();
+    await g2.start();
+    await wait(300);
+    assert.strictEqual(FakeMpv.instances.length, before, 'no empty player windows');
+    assert.strictEqual(g2.room.media, null);
+    g2.command('play'); // nothing to play: ignored
+    await wait(100);
+    assert.strictEqual(es.paused, true);
+
+    es.setMedia(file);
+    await until(() => FakeMpv.instances.length === before + 2, 2000, 'both players open');
+    const [hp, gp] = FakeMpv.instances.slice(before);
+    await until(() => hp.loaded === file && gp.loaded && gp.loaded.includes(es.media.id), 2000, 'and load the video');
+
+    gp.emit('exit'); // the guest closes their player window
+    await until(() => !g2.playerOpen, 1000, 'closed');
+    es._broadcastState(); // more state updates for the same video...
+    await wait(300);
+    assert.strictEqual(FakeMpv.instances.length, before + 2, '...do not pop it open again');
+
+    const file3 = path.join(dir, 'third.mkv');
+    fs.writeFileSync(file3, data.subarray(0, 2000));
+    es.setMedia(file3); // a new video does
+    await until(() => FakeMpv.instances.length === before + 3, 2000, 'reopened for the new video');
+    await until(() => FakeMpv.instances[before + 2].loaded && FakeMpv.instances[before + 2].loaded.includes(es.media.id), 2000, 'new video loaded');
+
+    await Promise.all([g2.reopenPlayer(), g2.reopenPlayer()]); // already open: no-op, never two players
+    assert.strictEqual(FakeMpv.instances.length, before + 3);
+    h2.stop(); g2.stop(); es.stop();
+  });
+
   await test('host changes video -> everyone reloads, paused at 0', async () => {
     const file2 = path.join(dir, 'other.mp4');
     fs.writeFileSync(file2, data.subarray(0, 1000));

@@ -138,9 +138,9 @@ $('hostBtn').addEventListener('click', async () => {
   const btn = $('hostBtn');
   try {
     const name = myName();
-    if (!hostFile) throw new Error('Choose a video to host first.');
     busy(btn, true, 'Starting…');
-    lobby = await api.host({ name, filePath: hostFile.path, port: Number($('port').value) || 8787, allowLan: $('allowLan').checked });
+    // The video is optional: start empty, talk, and pick one in the lobby.
+    lobby = await api.host({ name, filePath: hostFile ? hostFile.path : null, port: Number($('port').value) || 8787, allowLan: $('allowLan').checked });
     enterLobby();
   } catch (e) {
     showError(cleanError(e));
@@ -265,15 +265,17 @@ $('chatForm').addEventListener('submit', (e) => {
   $('chatInput').value = '';
 });
 
-$('changeVideo').addEventListener('click', async () => {
-  const f = await api.pickFile('Choose the next video');
+async function chooseVideo() {
+  const f = await api.pickFile(last && last.room && last.room.media ? 'Choose the next video' : 'Choose a video');
   if (!f) return;
   try {
     await api.changeVideo(f.path);
   } catch (e) {
     alert('Could not switch video: ' + cleanError(e));
   }
-});
+}
+$('changeVideo').addEventListener('click', chooseVideo);
+$('pickNow').addEventListener('click', chooseVideo);
 
 $('reopen').addEventListener('click', async () => {
   try {
@@ -369,7 +371,12 @@ function render(u) {
   const media = r && r.media;
   const dur = (u.player && u.player.duration) || (media && media.duration) || 0;
 
-  $('mediaName').textContent = media ? media.name : 'No video selected';
+  const isHost = !!(lobby && lobby.role === 'host');
+  $('mediaName').textContent = media ? media.name : 'No video yet';
+  $('pickNow').classList.toggle('hidden', !!media || !isHost);
+  $('changeVideo').textContent = media ? 'Change video…' : 'Choose video…';
+  $('playPause').disabled = !media;
+  $('seek').disabled = !media;
   $('mediaName').title = media ? media.name : '';
   const meta = [];
   if (media) meta.push(fmtBytes(media.size));
@@ -395,6 +402,9 @@ function render(u) {
   if (!u.connected) {
     text = 'Disconnected from the host. Reconnecting…';
     status.classList.add('bad');
+  } else if (!media) {
+    text = isHost ? "Talk it over, then choose a video. Everyone's player opens when you do." : 'Waiting for the host to choose a video.';
+    status.classList.add('idle');
   } else if (!u.player.open) {
     text = 'Your player window is closed.';
     status.classList.add('warn');
@@ -412,7 +422,7 @@ function render(u) {
     text = `Playing in sync${d > 0.05 ? ` (${Math.round(d * 1000)} ms off, correcting)` : ''}`;
   }
   status.textContent = text;
-  $('reopen').classList.toggle('hidden', u.player.open);
+  $('reopen').classList.toggle('hidden', u.player.open || !media);
 
   renderMembers(u, media, dur);
   renderLog(u.log);

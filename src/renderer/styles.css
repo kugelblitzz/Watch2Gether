@@ -569,3 +569,6 @@ button.bind.capturing {
 .app-update[data-kind="ok"] { color: var(--ok); }
 .app-update[data-kind="warn"] { color: var(--warn); }
 .app-update[data-kind="checking"] { color: var(--muted); }
+
+.pick-now { margin-top: 12px; padding: 7px 16px; }
+.controls button:disabled, #seek:disabled { opacity: .35; cursor: default; }

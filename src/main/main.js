@@ -149,7 +149,7 @@ function registerIpc() {
     await srv.start();
     server = srv;
     try {
-      srv.setMedia(filePath);
+      if (filePath) srv.setMedia(filePath); // optional: the host can pick one later
       const addr = ts.ip || (allowLan ? lanIp() : null) || '127.0.0.1';
       lobbyInfo = {
         role: 'host',

@@ -72,8 +72,10 @@ class Session extends EventEmitter {
   // ---------- lifecycle ----------
 
   async start() {
-    await this._startPlayer();
     await this._connect();
+    // The player only opens once there's a video: a lobby can start empty (talk first,
+    // pick later), and nobody gets an empty black window meanwhile.
+    if (this.openPromise) await this.openPromise;
     this.timers.push(setInterval(() => this._sync(), SYNC_INTERVAL_MS));
     this.timers.push(setInterval(() => this._ping(), 2000));
     this.timers.push(setInterval(() => this._sendStatus(), 2000));
@@ -90,16 +92,21 @@ class Session extends EventEmitter {
     if (this.mpv) this.mpv.quit();
   }
 
-  async reopenPlayer() {
-    if (this.playerOpen || this.reopening) return; // a double-click must not open two players
-    this.reopening = true;
-    try {
-      await this._startPlayer();
-      this.loadedMediaId = null;
-      await this._loadMedia();
-    } finally {
-      this.reopening = false;
+  /** Open the player and load the current video. Concurrent calls share one attempt. */
+  reopenPlayer() {
+    if (this.playerOpen) return Promise.resolve();
+    if (!this.openPromise) {
+      this.openPromise = (async () => {
+        try {
+          await this._startPlayer();
+          this.loadedMediaId = null;
+          await this._loadMedia();
+        } finally {
+          this.openPromise = null;
+        }
+      })();
     }
+    return this.openPromise;
   }
 
   // ---------- network ----------
@@ -249,7 +256,16 @@ class Session extends EventEmitter {
     if (!state) return;
     this.room = state;
     const id = state.media ? state.media.id : null;
-    if (id !== this.loadedMediaId) this._loadMedia();
+    if (id && !this.playerOpen) {
+      // A (new) video and no player yet: open it. Not again for the same video if the
+      // user closed the window themselves; "Open player window" brings it back.
+      if (id !== this.autoOpenedFor) {
+        this.autoOpenedFor = id;
+        this.reopenPlayer().catch((e) => this._log('Could not open the player: ' + e.message));
+      }
+    } else if (id !== this.loadedMediaId) {
+      this._loadMedia();
+    }
     this._sync();
     this._emitUpdate(true);
   }
