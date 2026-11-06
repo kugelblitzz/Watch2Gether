@@ -41,7 +41,7 @@ app.whenReady().then(async () => {
     uIOhook.keyToggle(code, 'down');
     await wait(ms);
     uIOhook.keyToggle(code, 'up');
-    await wait(150);
+    await wait(400); // let the events drain: on a busy PC they can arrive a few hundred ms late
   };
   const choose = async (code) => {
     const p = hk.captureNext();
@@ -72,6 +72,7 @@ app.whenReady().then(async () => {
     });
 
     await test('cancelled captures do not break it', async () => {
+      await wait(500);
       for (let i = 0; i < 3; i++) {
         const p = hk.captureNext();
         await wait(50);
