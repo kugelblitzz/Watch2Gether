@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('w2g', {
   setMute: (on) => ipcRenderer.invoke('player:mute', on),
   onFullscreen: (cb) => ipcRenderer.on('fullscreen', (_e, on) => cb(on)),
   onCursorX: (cb) => ipcRenderer.on('cursor-x', (_e, x) => cb(x)),
+  onToggleSidebar: (cb) => ipcRenderer.on('toggle-sidebar', () => cb()),
   onVoiceAudio: (cb) => ipcRenderer.on('voice-audio', (_e, bytes) => cb(bytes)),
   onEnded: (cb) => ipcRenderer.on('ended', (_e, reason) => cb(reason)),
 });

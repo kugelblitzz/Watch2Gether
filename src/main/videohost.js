@@ -12,7 +12,11 @@
  * hidden again as things settle and checked every couple of seconds while visible.
  */
 
-const { BaseWindow } = require('electron');
+const { BaseWindow, screen } = require('electron');
+
+/** Hide the mouse pointer after this long without movement over the video. */
+const CURSOR_IDLE_MS = 2000;
+const CURSOR_POLL_MS = 100;
 
 let win32 = null;
 function user32() {
@@ -26,6 +30,10 @@ function user32() {
     EnumChildWindows: lib.func('bool __stdcall EnumChildWindows(intptr_t parent, W2GEnumProc *cb, intptr_t lparam)'),
     GetClassNameW: lib.func('int __stdcall GetClassNameW(intptr_t hwnd, _Out_ uint8_t *buf, int maxChars)'),
     ShowWindow: lib.func('bool __stdcall ShowWindow(intptr_t hwnd, int cmd)'),
+    // Cursor visibility for the calling (UI) thread. mpv's window is a child of ours, so the
+    // two share input state and this hides the pointer over the video too. (mpv can't do it
+    // itself when embedded: the parent window keeps resetting the cursor to an arrow.)
+    ShowCursor: lib.func('int __stdcall ShowCursor(bool show)'),
   };
   return win32;
 }
@@ -78,6 +86,40 @@ class VideoHost {
       if (!this.win.isDestroyed() && this.win.isVisible()) this._hideCompositor();
     }, 2000);
     this.watchdog.unref();
+
+    // Auto-hide the mouse pointer over the video when it hasn't moved for a while.
+    this.cursorHidden = false;
+    this.lastPoint = null;
+    this.lastMove = Date.now();
+    this.cursorTimer = setInterval(() => this._cursorTick(), CURSOR_POLL_MS);
+    this.cursorTimer.unref();
+  }
+
+  _cursorTick() {
+    if (this.win.isDestroyed()) return;
+    const p = screen.getCursorScreenPoint();
+    const moved = !this.lastPoint || p.x !== this.lastPoint.x || p.y !== this.lastPoint.y;
+    this.lastPoint = p;
+    if (moved) this.lastMove = Date.now();
+    let over = false;
+    if (this.win.isVisible()) {
+      const b = this.win.getBounds();
+      over = p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
+    }
+    this._setCursorHidden(over && !moved && Date.now() - this.lastMove >= CURSOR_IDLE_MS);
+  }
+
+  /** Hide / show exactly once each way, so the pointer can never get stuck hidden. */
+  _setCursorHidden(hide) {
+    if (hide === this.cursorHidden) return;
+    const w = user32();
+    if (!w) return;
+    try {
+      w.ShowCursor(!hide);
+      this.cursorHidden = hide;
+    } catch (e) {
+      console.error('[videohost] cursor', e && e.message);
+    }
   }
 
   /** Value for mpv's --wid. */
@@ -127,6 +169,8 @@ class VideoHost {
   }
 
   destroy() {
+    clearInterval(this.cursorTimer);
+    this._setCursorHidden(false);
     clearInterval(this.watchdog);
     for (const t of this.settleTimers) clearTimeout(t);
     if (!this.win.isDestroyed()) this.win.destroy();

@@ -420,23 +420,36 @@ function renderPlayerChrome() {
 }
 
 // Fullscreen: only the movie; the sidebar slides in when the mouse reaches the left edge.
+const PEEK_EDGE_PX = 10;      // mouse this close to the left edge (inside the window) opens it
+const PEEK_HIDE_DELAY_MS = 700;
 let peekTimer = null;
-function setPeek(on) {
+let peekPinned = false;       // opened with Tab: stays until Tab again (or leaving fullscreen)
+function setPeek(on, pinned = false) {
   clearTimeout(peekTimer);
+  peekTimer = null;
+  peekPinned = on && pinned;
   document.body.classList.toggle('peek', on);
+}
+function toggleSidebar() {
+  if (!document.body.classList.contains('fullscreen')) return;
+  setPeek(!document.body.classList.contains('peek'), true);
 }
 api.onFullscreen((on) => {
   document.body.classList.toggle('fullscreen', on);
   setPeek(false);
   syncStage();
 });
+api.onToggleSidebar(toggleSidebar); // Tab pressed while the video has focus
+/** x: cursor position from the left of the window, or null when it's outside the window
+ *  (e.g. on another monitor), which counts as "away". */
 api.onCursorX((x) => {
-  if (!document.body.classList.contains('fullscreen')) return;
+  if (!document.body.classList.contains('fullscreen') || peekPinned) return;
   const peeking = document.body.classList.contains('peek');
   const width = $('sidebar').offsetWidth;
-  if (x != null && x <= 6) setPeek(true);
-  else if (peeking && (x == null || x > width + 40)) {
-    if (!peekTimer) peekTimer = setTimeout(() => { peekTimer = null; setPeek(false); }, 700);
+  if (x != null && x <= PEEK_EDGE_PX) {
+    setPeek(true);
+  } else if (peeking && (x == null || x > width + 40)) {
+    if (!peekTimer) peekTimer = setTimeout(() => setPeek(false), PEEK_HIDE_DELAY_MS);
   } else if (peeking) {
     clearTimeout(peekTimer);
     peekTimer = null;
@@ -448,6 +461,9 @@ document.addEventListener('keydown', (e) => {
     if (playerMode === 'embedded') api.fullscreen();
   } else if (e.key === 'Escape' && document.body.classList.contains('fullscreen')) {
     api.fullscreen(false);
+  } else if (e.key === 'Tab' && document.body.classList.contains('fullscreen')) {
+    e.preventDefault();
+    toggleSidebar();
   }
 });
 

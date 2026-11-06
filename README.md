@@ -25,7 +25,8 @@ Watch a video file from one person's PC together with friends, in sync. Anyone i
 
 Everything is in one window, Discord-style: the lobby, members, voice and chat on the left, and the movie on the right with the play bar under it.
 
-- **Fullscreen** (button, **F**, or double-click the video): just the movie. Move the mouse to the left edge and the sidebar slides in; move away and it hides again. **Esc** leaves fullscreen.
+- **Fullscreen** (button, **F**, or double-click the video): just the movie. Move the mouse to the left edge and the sidebar slides in; move away (or onto another monitor) and it hides again. **Tab** pins the sidebar open or closes it. **Esc** leaves fullscreen.
+- The mouse pointer hides over the video after 2 seconds without movement.
 - **Pop out** (button next to fullscreen): the movie moves into its own window (mpv's own fullscreen with **f** works there). **Bring it back** puts it back in the app.
 
 You can control playback from the app or from the video itself:

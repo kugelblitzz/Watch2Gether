@@ -9,7 +9,7 @@
  * Run: npm run test:app -- <silent video file>
  */
 
-const { app, BrowserWindow, BaseWindow, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, BaseWindow, nativeImage, dialog, screen } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -37,6 +37,18 @@ app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'w2g-app-e2e-')));
 require('../../src/main/main.js');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// The real mouse pointer (for the auto-hide check; it's put back afterwards).
+const koffi = require('koffi');
+const user32 = koffi.load('user32.dll');
+const CURSORINFO = koffi.struct('W2GTestCursorInfo', { cbSize: 'uint32', flags: 'uint32', hCursor: 'intptr_t', x: 'long', y: 'long' });
+const GetCursorInfo = user32.func('bool __stdcall GetCursorInfo(_Inout_ W2GTestCursorInfo *ci)');
+const SetCursorPos = user32.func('bool __stdcall SetCursorPos(int x, int y)');
+const cursorShowing = () => {
+  const ci = { cbSize: koffi.sizeof(CURSORINFO), flags: 0, hCursor: 0, x: 0, y: 0 };
+  GetCursorInfo(ci);
+  return ci.flags === 1;
+};
 const fwd = (p) => p.split(path.sep).join('/');
 let passed = 0;
 let failed = 0;
@@ -188,6 +200,44 @@ app.whenReady().then(async () => {
       assert(colorful(inset(stage, 60)) > 0.3, 'movie still visible next to it');
       win.webContents.send('cursor-x', 1500);
       await until(() => js('!document.body.classList.contains("peek")'), 3000, 'hides again');
+    });
+
+    await test('mouse on another monitor to the left hides the sidebar (it used to stay open)', async () => {
+      win.webContents.send('cursor-x', 3);
+      await until(() => js('document.body.classList.contains("peek")'), 2000, 'peek');
+      win.webContents.send('cursor-x', null); // what the poller sends when the cursor is outside the window
+      await until(() => js('!document.body.classList.contains("peek")'), 3000, 'hidden again');
+    });
+
+    await test('Tab pins the sidebar open in fullscreen, and Tab again closes it', async () => {
+      await js('toggleSidebar(); 0');
+      assert.strictEqual(await js('document.body.classList.contains("peek")'), true);
+      win.webContents.send('cursor-x', 1500); // mouse far away: a pinned sidebar stays
+      await wait(1200);
+      assert.strictEqual(await js('document.body.classList.contains("peek")'), true, 'stays while pinned');
+      await js('toggleSidebar(); 0');
+      assert.strictEqual(await js('document.body.classList.contains("peek")'), false);
+    });
+
+    await test('the mouse pointer hides over the video after 2 s still, and comes back when it moves', async () => {
+      const home = screen.getCursorScreenPoint();
+      try {
+        const stage = await screenRect('#stage');
+        const cx = Math.round(stage.x + stage.width / 2);
+        const cy = Math.round(stage.y + stage.height / 2);
+        SetCursorPos(cx, cy);
+        await wait(300);
+        assert.strictEqual(cursorShowing(), true, 'visible right after moving');
+        await wait(2600);
+        assert.strictEqual(cursorShowing(), false, 'hidden after 2 s without movement');
+        SetCursorPos(cx + 30, cy + 10);
+        await wait(300);
+        assert.strictEqual(cursorShowing(), true, 'back as soon as it moves');
+      } finally {
+        SetCursorPos(home.x, home.y);
+        await wait(200);
+      }
+      assert.strictEqual(cursorShowing(), true, 'never left hidden');
     });
 
     await test('Esc leaves fullscreen', async () => {

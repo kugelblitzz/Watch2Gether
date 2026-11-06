@@ -72,7 +72,7 @@ require.cache[require.resolve('../src/main/mpv')] = { exports: { Mpv: FakeMpv } 
 
 const { HostServer } = require('../src/main/server');
 const { Session } = require('../src/main/session');
-const { parseInvite, isAllowedAddress } = require('../src/main/util');
+const { parseInvite, isAllowedAddress, cursorXInWindow } = require('../src/main/util');
 const WebSocket = require('ws');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -113,6 +113,15 @@ async function test(name, fn) {
     assert.deepStrictEqual(parseInvite('100.101.1.2:9000/abc123'), { host: '100.101.1.2', port: 9000, code: 'ABC123', baseUrl: 'http://100.101.1.2:9000' });
     assert.strictEqual(parseInvite('w2g://pc.tail.ts.net/XYZ').port, 8787);
     assert.throws(() => parseInvite('nonsense'));
+  });
+  await test('fullscreen sidebar: only the left edge INSIDE the window counts (monitor to the left = away)', () => {
+    const right = { x: 1920, y: 0, width: 1920, height: 1080 }; // fullscreen on the right monitor
+    assert.strictEqual(cursorXInWindow({ x: 1922, y: 500 }, right), 2, 'at the left edge');
+    assert.strictEqual(cursorXInWindow({ x: 1000, y: 500 }, right), null, 'on the main monitor to the left');
+    assert.strictEqual(cursorXInWindow({ x: 1919, y: 500 }, right), null, 'one pixel over the border');
+    assert.strictEqual(cursorXInWindow({ x: 2500, y: 1200 }, right), null, 'below the window');
+    const left = { x: -1920, y: 0, width: 1920, height: 1080 }; // monitor placed left of the primary
+    assert.strictEqual(cursorXInWindow({ x: -1915, y: 10 }, left), 5);
   });
   await test('address filter', () => {
     assert(isAllowedAddress('::ffff:100.64.0.1', false));
@@ -490,6 +499,7 @@ async function test(name, fn) {
     assert.strictEqual(p1.keybinds.f, 'script-message w2g-fullscreen');
     assert.strictEqual(p1.keybinds.MBTN_LEFT_DBL, 'script-message w2g-fullscreen');
     assert.strictEqual(p1.keybinds.ESC, 'script-message w2g-exit-fullscreen');
+    assert.strictEqual(p1.keybinds.TAB, 'script-message w2g-sidebar', 'Tab toggles the fullscreen sidebar');
     p1.emit('event', { event: 'client-message', args: ['w2g-fullscreen'] });
     p1.emit('event', { event: 'client-message', args: ['something-else'] });
     assert.deepStrictEqual(requests, ['fullscreen']);

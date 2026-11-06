@@ -6,7 +6,7 @@ const path = require('path');
 const { HostServer } = require('./server');
 const { Session } = require('./session');
 const { getTailscaleInfo, findMpv, installMpvWithWinget, lanIp } = require('./env');
-const { parseInvite } = require('./util');
+const { parseInvite, cursorXInWindow } = require('./util');
 const { initUpdater, installUpdate, checkNow, checkAfterLobby } = require('./updater');
 const { Hotkeys } = require('./hotkeys');
 
@@ -131,6 +131,7 @@ function wireSession(s) {
     if (!win) return;
     if (r === 'fullscreen') win.setFullScreen(!win.isFullScreen());
     if (r === 'exit-fullscreen' && win.isFullScreen()) win.setFullScreen(false);
+    if (r === 'sidebar') send('toggle-sidebar');
   });
   s.on('ended', (reason) => {
     leave();
@@ -395,17 +396,18 @@ function createWindow() {
   let lastX = null;
   win.on('enter-full-screen', () => {
     send('fullscreen', true);
+    if (session && session.embedded) session.osd('Tab: sidebar   ·   Esc: exit fullscreen', 3000);
     clearInterval(edgeTimer);
     edgeTimer = setInterval(() => {
       if (!win) return;
       const p = screen.getCursorScreenPoint();
       const b = win.getContentBounds();
-      const x = p.y >= b.y && p.y < b.y + b.height ? p.x - b.x : null;
+      const x = cursorXInWindow(p, b); // null when outside, e.g. on another monitor
       if (x !== lastX) {
         lastX = x;
         send('cursor-x', x);
       }
-    }, 80);
+    }, 40); // fast enough to catch the edge when the mouse can keep going onto another monitor
   });
   win.on('leave-full-screen', () => {
     clearInterval(edgeTimer);

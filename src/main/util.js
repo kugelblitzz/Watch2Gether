@@ -75,7 +75,18 @@ function parseInvite(text, defaultPort = 8787) {
   return { host, port, code, baseUrl: `http://${host}:${port}` };
 }
 
+/**
+ * Cursor position relative to the window's left edge, or null when the cursor is outside
+ * the window. Outside includes another monitor to the left, which must count as "away"
+ * (it used to count as "at the left edge" and kept the fullscreen sidebar open).
+ */
+function cursorXInWindow(p, b) {
+  const inside = p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
+  return inside ? p.x - b.x : null;
+}
+
 module.exports = {
+  cursorXInWindow,
   normalizeAddress,
   isLoopback,
   isTailscale,

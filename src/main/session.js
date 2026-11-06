@@ -109,6 +109,11 @@ class Session extends EventEmitter {
     await this.reopenPlayer();
   }
 
+  /** A short message drawn by the player over the video (HTML can't be shown on top of it). */
+  osd(text, ms = 2500) {
+    if (this.mpv && this.playerOpen) this.mpv.command('show-text', String(text), String(ms)).catch(() => {});
+  }
+
   /** Player volume, 0-130 (100 = the file's own level). Only affects this user. */
   setVolume(v) {
     const vol = Math.max(0, Math.min(130, Math.round(Number(v))));
@@ -420,7 +425,7 @@ class Session extends EventEmitter {
     await mpv.start({ title: 'Watch2Gether', extraArgs: [...(wid ? ['--wid=' + wid] : []), `--volume=${volume}`] });
     if (wid) {
       // Inside the app, fullscreen is the app's: f / double-click toggle it, Esc leaves it.
-      for (const [key, msg] of [['f', 'w2g-fullscreen'], ['MBTN_LEFT_DBL', 'w2g-fullscreen'], ['ESC', 'w2g-exit-fullscreen']]) {
+      for (const [key, msg] of [['f', 'w2g-fullscreen'], ['MBTN_LEFT_DBL', 'w2g-fullscreen'], ['ESC', 'w2g-exit-fullscreen'], ['TAB', 'w2g-sidebar']]) {
         await mpv.command('keybind', key, 'script-message ' + msg).catch(() => {});
       }
     }
