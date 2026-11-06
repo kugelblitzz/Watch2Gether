@@ -359,7 +359,7 @@ class Session extends EventEmitter {
       this.loadedMediaId = null;
       this.loading = false;
       if (!this.closed) {
-        this._log('Player window closed. Use "Reopen player" to get it back.');
+        this._log('Player window closed. Click "Open player window" under the controls to get it back.');
         this._updateBuffering();
         this._emitUpdate(true);
       }

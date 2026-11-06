@@ -283,9 +283,14 @@ details[open] > :not(summary) { animation: fade-down .3s var(--ease) both; }
 #seek:hover::-webkit-slider-thumb { margin-top: -3px; }
 #seek:focus { outline: none; }
 
+.status-row { display: flex; align-items: center; gap: 14px; margin: 12px 6px 18px; min-height: 30px; }
+button.reopen {
+  display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; font-size: 13px;
+  animation: drop-in .45s var(--spring) both;
+}
 .status {
   display: flex; align-items: center; gap: 8px;
-  min-height: 22px; margin: 12px 6px 18px; color: var(--muted); font-size: 13px;
+  min-height: 22px; color: var(--muted); font-size: 13px;
   transition: color .3s var(--ease);
 }
 .status:not(:empty)::before {

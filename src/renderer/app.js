@@ -279,7 +279,7 @@ $('reopen').addEventListener('click', async () => {
   try {
     await api.reopenPlayer();
   } catch (e) {
-    alert('Could not reopen the player: ' + cleanError(e));
+    alert('Could not open the player: ' + cleanError(e));
   }
 });
 
