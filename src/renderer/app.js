@@ -241,6 +241,24 @@ $('leave').addEventListener('click', async () => {
 
 api.onEnded((reason) => exitLobby(reason));
 
+api.appVersion().then((v) => { $('appVersion').textContent = 'v' + v; });
+
+api.onAppUpdate((u) => {
+  $('appUpdate').classList.remove('hidden');
+  const ready = u.state === 'ready';
+  $('appUpdateText').textContent = ready
+    ? `v${u.version} is ready. It installs when you close the app.`
+    : `Downloading v${u.version}…`;
+  $('appUpdateBtn').classList.toggle('hidden', !ready);
+});
+
+$('appUpdateBtn').addEventListener('click', () => {
+  if (lobby && !confirm(lobby.role === 'host'
+    ? 'Restarting closes the lobby for everyone. Update now?'
+    : 'Restarting leaves the lobby. Update now?')) return;
+  api.installUpdate();
+});
+
 api.onUpdate((u) => {
   if (!lobby) return;
   last = u;

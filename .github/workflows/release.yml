@@ -66,7 +66,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Watch2Gether-Setup-${{ steps.ver.outputs.version }}
-          path: dist/Watch2Gether-Setup-*.exe
+          path: |
+            dist/Watch2Gether-Setup-*.exe
+            dist/Watch2Gether-Setup-*.exe.blockmap
+            dist/latest.yml
           if-no-files-found: error
 
       - name: Publish release
@@ -79,6 +82,8 @@ jobs:
 
           Bundles mpv (\`${{ steps.mpv.outputs.name }}\`, GPL, source at https://mpv.io).
           EOF
+          # latest.yml + blockmap are what installed clients' auto-updater reads.
           gh release create "v$v" dist/Watch2Gether-Setup-$v.exe \
+            dist/Watch2Gether-Setup-$v.exe.blockmap dist/latest.yml \
             --target "${{ github.sha }}" --title "Watch2Gether $v" \
             --notes-file "$RUNNER_TEMP/notes.md"

@@ -7,6 +7,7 @@ const { HostServer } = require('./server');
 const { Session } = require('./session');
 const { getTailscaleInfo, findMpv, installMpvWithWinget, lanIp } = require('./env');
 const { parseInvite } = require('./util');
+const { initUpdater, installUpdate } = require('./updater');
 
 const VIDEO_FILTERS = [
   { name: 'Videos', extensions: ['mkv', 'mp4', 'm4v', 'mov', 'avi', 'webm', 'ts', 'm2ts', 'wmv'] },
@@ -199,6 +200,11 @@ function registerIpc() {
     if (session) await session.reopenPlayer();
   });
   ipcMain.handle('session:leave', () => leave());
+  ipcMain.handle('app:version', () => app.getVersion());
+  ipcMain.handle('app:installUpdate', async () => {
+    await leave();
+    installUpdate();
+  });
   ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text)));
   ipcMain.handle('open:external', (_e, url) => {
     if (/^https:\/\//.test(url)) shell.openExternal(url);
@@ -243,6 +249,7 @@ if (!app.requestSingleInstanceLock()) {
     loadSettings();
     registerIpc();
     createWindow();
+    initUpdater((u) => send('app-update', u));
   });
   app.on('before-quit', () => { leave(); });
   app.on('window-all-closed', () => {

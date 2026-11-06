@@ -19,5 +19,8 @@ contextBridge.exposeInMainWorld('w2g', {
   copy: (text) => ipcRenderer.invoke('clipboard:write', text),
   openExternal: (url) => ipcRenderer.invoke('open:external', url),
   onUpdate: (cb) => ipcRenderer.on('update', (_e, u) => cb(u)),
-  onEnded: (cb) => ipcRenderer.on('ended', (_e, reason) => cb(reason)),
+  appVersion: () => ipcRenderer.invoke('app:version'),
+  installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
+  onAppUpdate: (cb) => ipcRenderer.on('app-update', (_e, u) => cb(u)),
+  onEnded:(cb) => ipcRenderer.on('ended', (_e, reason) => cb(reason)),
 });
