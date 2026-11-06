@@ -33,7 +33,7 @@ let win = null;
 let server = null;
 let session = null;
 let lobbyInfo = null;
-let settings = { name: '', port: DEFAULT_PORT, mpvPath: null, lastInvite: '', allowLan: false, playerMode: 'embedded' };
+let settings = { name: '', port: DEFAULT_PORT, mpvPath: null, lastInvite: '', allowLan: false, playerMode: 'embedded', volume: 100 };
 let videoHost = null; // native window the in-app player draws into
 
 /** Where the player draws: inside the app (embedded) or in mpv's own window (popout). */
@@ -79,10 +79,21 @@ function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
+let volumeTimer = null;
+/** Remember the volume, but don't write the settings file on every slider step. */
+function saveVolumeSoon(v) {
+  settings.volume = v;
+  clearTimeout(volumeTimer);
+  volumeTimer = setTimeout(() => saveSettings({ volume: settings.volume }), 800);
+}
+
 function wireSession(s) {
   s.on('update', (u) => send('update', { ...u, lobby: lobbyInfo }));
   s.on('voice', (msg) => send('voice', msg));
   s.on('voice-audio', (buf) => send('voice-audio', buf));
+  s.on('volume', (v) => {
+    if (v !== settings.volume) saveVolumeSoon(v);
+  });
   s.on('player-request', (r) => {
     if (!win) return;
     if (r === 'fullscreen') win.setFullScreen(!win.isFullScreen());
@@ -172,6 +183,7 @@ function registerIpc() {
       };
       session = new Session({
         getWid: playerWid,
+        getVolume: () => settings.volume,
         baseUrl: `http://127.0.0.1:${port}`,
         code: srv.code,
         name,
@@ -202,6 +214,7 @@ function registerIpc() {
     lobbyInfo = { role: 'guest', code: inv.code, invite: `${inv.host}:${inv.port}/${inv.code}`, host: inv.host, port: inv.port };
     session = new Session({
       getWid: playerWid,
+      getVolume: () => settings.volume,
       baseUrl: inv.baseUrl,
       code: inv.code,
       name,
@@ -235,6 +248,14 @@ function registerIpc() {
       if (session) await session.restartPlayer();
     }
     return mode;
+  });
+  ipcMain.handle('player:volume', (_e, v) => {
+    if (!Number.isFinite(Number(v))) return;
+    saveVolumeSoon(Math.max(0, Math.min(130, Math.round(Number(v)))));
+    if (session) session.setVolume(settings.volume);
+  });
+  ipcMain.handle('player:mute', (_e, on) => {
+    if (session) session.setMute(!!on);
   });
   ipcMain.handle('window:fullscreen', (_e, on) => {
     if (win) win.setFullScreen(typeof on === 'boolean' ? on : !win.isFullScreen());

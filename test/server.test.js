@@ -486,7 +486,7 @@ async function test(name, fn) {
     await g3.start();
     await until(() => FakeMpv.instances.length === before + 1 && FakeMpv.instances[before].loaded, 2000, 'player open');
     const p1 = FakeMpv.instances[before];
-    assert.deepStrictEqual(p1.startOpts.extraArgs, ['--wid=123456'], 'drawn into the app window');
+    assert(p1.startOpts.extraArgs.includes('--wid=123456'), 'drawn into the app window');
     assert.strictEqual(p1.keybinds.f, 'script-message w2g-fullscreen');
     assert.strictEqual(p1.keybinds.MBTN_LEFT_DBL, 'script-message w2g-fullscreen');
     assert.strictEqual(p1.keybinds.ESC, 'script-message w2g-exit-fullscreen');
@@ -499,13 +499,44 @@ async function test(name, fn) {
     assert(p1.quitCalled, 'old player closed');
     const p2 = FakeMpv.instances[before + 1];
     assert(p2, 'new player started');
-    assert.deepStrictEqual(p2.startOpts.extraArgs, [], 'its own window');
+    assert(!p2.startOpts.extraArgs.some((a) => a.startsWith('--wid')), 'its own window');
     assert.strictEqual(p2.keybinds, undefined, 'mpv keeps its own f / double-click in its own window');
     await until(() => p2.loaded && p2.loaded.includes(xs.media.id), 2000, 'same video reloaded');
     p1.emit('exit'); // the old player's exit arrives late: must not count as "player closed"
     await wait(100);
     assert.strictEqual(g3.playerOpen, true);
     g3.stop(); xs.stop();
+  });
+
+  await test('volume: starts at the saved level, the slider sets it, the player\'s own keys update the app', async () => {
+    const vp2 = port + 7;
+    const vs2 = new HostServer({ port: vp2 });
+    await vs2.start();
+    vs2.setMedia(file);
+    const before = FakeMpv.instances.length;
+    const saved = [];
+    const g4 = new Session({ baseUrl: `http://127.0.0.1:${vp2}`, code: vs2.code, name: 'G4', mpvPath: 'fake', getVolume: () => 65 });
+    g4.on('volume', (v) => saved.push(v));
+    let lastUpdate = null;
+    g4.on('update', (u) => { lastUpdate = u; });
+    await g4.start();
+    await until(() => FakeMpv.instances.length === before + 1 && FakeMpv.instances[before].loaded, 2000, 'player open');
+    const p = FakeMpv.instances[before];
+    assert(p.startOpts.extraArgs.includes('--volume=65'), 'starts at the saved volume');
+    g4.setVolume(40);
+    assert.strictEqual(p.props.volume, 40, 'slider sets the player volume');
+    g4.setVolume(500);
+    assert.strictEqual(p.props.volume, 130, 'capped at 130');
+    g4.setMute(true);
+    assert.strictEqual(p.props.mute, true);
+    g4.setVolume(20);
+    assert.strictEqual(p.props.mute, false, 'moving the slider up unmutes');
+    await wait(50); // let the player's own reports of those changes arrive first
+    p.emit('property', 'volume', 85); // user pressed 0 / scrolled inside the player
+    await wait(50);
+    assert.strictEqual(lastUpdate.player.volume, 85, 'app slider follows');
+    assert.deepStrictEqual(saved.slice(-1), [85], 'and it is remembered');
+    g4.stop(); vs2.stop();
   });
 
   await test('host changes video -> everyone reloads, paused at 0', async () => {

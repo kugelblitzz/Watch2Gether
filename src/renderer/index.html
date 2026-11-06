@@ -181,6 +181,12 @@
             <span id="timeCur" class="time">0:00</span>
             <input type="range" id="seek" min="0" max="1" value="0" step="0.1" aria-label="Seek">
             <span id="timeDur" class="time">0:00</span>
+            <div class="volume">
+              <button id="volBtn" class="icon-btn" title="Mute (M)" aria-label="Mute">
+                <svg class="vi" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path id="volWave1" d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/><path id="volWave2" d="M18.5 6.5a8 8 0 0 1 0 11"/><path id="volX" d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+              </button>
+              <input type="range" id="volSlider" class="slider" min="0" max="130" step="1" value="100" aria-label="Volume" title="Volume (↑ / ↓)">
+            </div>
             <button id="popOut" class="icon-btn" title="Pop out into its own window" aria-label="Pop out"><svg class="vi" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg></button>
             <button id="fullscreenBtn" class="icon-btn" title="Fullscreen (F, or double-click the video)" aria-label="Fullscreen"><svg class="vi" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
           </div>

@@ -255,7 +255,7 @@ details[open] > :not(summary) { animation: fade-down .3s var(--ease) both; }
   position: absolute; inset: 0; margin: auto; width: 20px; height: 20px;
   transition: opacity .25s var(--ease), transform .35s var(--spring);
 }
-.controls .big .i-play { margin-left: 18px; }   /* optical centring */
+.controls .big .i-play { left: 3px; }   /* optical centring: a triangle's visual centre sits left of its box centre */
 .controls .big .i-pause { opacity: 0; transform: scale(.4) rotate(-90deg); }
 .controls .big.playing .i-play { opacity: 0; transform: scale(.4) rotate(90deg); }
 .controls .big.playing .i-pause { opacity: 1; transform: none; }
@@ -633,3 +633,8 @@ body.fullscreen .stage-col .controls, body.fullscreen .stage-col .status-row { d
 .card-head h3 { margin: 0; }
 .side-card #copyInvite { min-width: 0; padding: 4px 12px; font-size: 12px; }
 .side-card .invite-row code { width: 100%; font-size: 12px; }
+
+/* volume: speaker button + slider in the play bar */
+.volume { display: flex; align-items: center; gap: 4px; flex: none; }
+.volume #volSlider { width: 96px; }
+#volBtn.off { color: var(--warn); }

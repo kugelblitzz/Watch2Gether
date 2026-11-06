@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld('w2g', {
   videoRect: (rect) => ipcRenderer.invoke('video:rect', rect),
   setPlayerMode: (mode) => ipcRenderer.invoke('player:mode', mode),
   fullscreen: (on) => ipcRenderer.invoke('window:fullscreen', on),
+  setVolume: (v) => ipcRenderer.invoke('player:volume', v),
+  setMute: (on) => ipcRenderer.invoke('player:mute', on),
   onFullscreen: (cb) => ipcRenderer.on('fullscreen', (_e, on) => cb(on)),
   onCursorX: (cb) => ipcRenderer.on('cursor-x', (_e, x) => cb(x)),
   onVoiceAudio: (cb) => ipcRenderer.on('voice-audio', (_e, bytes) => cb(bytes)),

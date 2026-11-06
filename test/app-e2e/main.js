@@ -131,10 +131,21 @@ app.whenReady().then(async () => {
       assert(colorful(inset(await screenRect('.stage-col .controls'), 8)) < 0.1, 'controls bar not covered');
     });
 
+    await test('volume slider and mute button control the real player, and follow it back', async () => {
+      await js('changeVolume(40); 0');
+      await until(() => js('last.player.volume === 40'), 3000, 'player at 40');
+      await js('document.getElementById("volBtn").click(); 0');
+      await until(() => js('last.player.muted === true'), 3000, 'muted');
+      await js('document.getElementById("volBtn").click(); 0');
+      await until(() => js('last.player.muted === false'), 3000, 'unmuted');
+      await js('changeVolume(100); 0');
+      await until(() => js('last.player.volume === 100'), 3000, 'back to 100');
+    });
+
     await test('fullscreen: the movie fills the screen and the sidebar is tucked away', async () => {
       await js('api.fullscreen(true); 0');
       await until(() => js('document.body.classList.contains("fullscreen")'), 5000, 'fullscreen');
-      await wait(1500);
+      await wait(2500); // let Windows' fullscreen animation finish before capturing
       const c = win.getContentBounds();
       const v = colorful(inset(c, 60));
       console.log(`       fullscreen ${c.width}x${c.height}: ${(v * 100).toFixed(0)}% colorful`);

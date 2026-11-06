@@ -37,7 +37,7 @@ You can control playback from the app or from the video itself:
 | f / double-click | Fullscreen (just you) |
 | # | Switch audio track (just you) |
 | j | Switch subtitles (just you) |
-| 9 / 0 | Volume (just you) |
+| 9 / 0, or the volume slider under the video | Volume (just you, remembered) |
 
 When the video ends, the room pauses on the last frame. Press play to watch it again from the start.
 

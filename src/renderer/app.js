@@ -331,6 +331,54 @@ async function setPlayerMode(mode) {
   renderPlayerChrome();
   syncStage();
 }
+
+// ---------- volume (just you; 100 = the file's own level, up to 130 like mpv) ----------
+
+let volDragging = false;
+let volume = 100;
+let muted = false;
+function paintVolume() {
+  const s = $('volSlider');
+  if (!volDragging) s.value = String(volume);
+  paintRange(s); // voice-ui.js
+  const off = muted || volume === 0;
+  $('volX').style.display = off ? '' : 'none';
+  $('volWave1').style.display = off ? 'none' : '';
+  $('volWave2').style.display = off || volume < 50 ? 'none' : '';
+  $('volBtn').title = off ? 'Unmute (M)' : 'Mute (M)';
+  $('volBtn').classList.toggle('off', off);
+  s.title = `Volume ${volume}% (↑ / ↓)`;
+}
+function changeVolume(v) {
+  volume = Math.max(0, Math.min(130, Math.round(v)));
+  if (volume > 0) muted = false;
+  paintVolume();
+  api.setVolume(volume);
+}
+$('volSlider').addEventListener('input', () => {
+  volDragging = true;
+  changeVolume(Number($('volSlider').value));
+});
+$('volSlider').addEventListener('change', () => { volDragging = false; });
+$('volBtn').addEventListener('click', () => {
+  muted = !muted;
+  paintVolume();
+  api.setMute(muted);
+});
+document.querySelector('.volume').addEventListener('wheel', (e) => {
+  e.preventDefault();
+  changeVolume(volume + (e.deltaY < 0 ? 5 : -5));
+}, { passive: false });
+document.addEventListener('keydown', (e) => {
+  if (!lobby || isTyping(e.target) || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    changeVolume(volume + (e.key === 'ArrowUp' ? 5 : -5));
+  } else if (e.key === 'm' || e.key === 'M') {
+    $('volBtn').click();
+  }
+});
+
 $('popOut').addEventListener('click', () => setPlayerMode(playerMode === 'embedded' ? 'popout' : 'embedded'));
 $('bringBack').addEventListener('click', () => setPlayerMode('embedded'));
 $('fullscreenBtn').addEventListener('click', () => api.fullscreen());
@@ -535,6 +583,12 @@ function render(u) {
   $('reopen').classList.toggle('hidden', u.player.open || !media);
   renderPlayerChrome();
   syncStage();
+  // follow the player (its own volume keys / wheel change it too)
+  if (u.player && u.player.volume != null && !volDragging) {
+    volume = u.player.volume;
+    muted = !!u.player.muted;
+  }
+  paintVolume();
 
   renderMembers(u, media, dur);
   renderLog(u.log);
@@ -609,6 +663,8 @@ function renderLog(log) {
 (async function boot() {
   settings = await api.getSettings();
   playerMode = settings.playerMode === 'popout' ? 'popout' : 'embedded';
+  volume = Number.isFinite(settings.volume) ? settings.volume : 100;
+  paintVolume();
   $('name').value = settings.name || '';
   $('port').value = settings.port || 8787;
   $('allowLan').checked = !!settings.allowLan;

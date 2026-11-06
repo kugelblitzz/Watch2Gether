@@ -32,6 +32,8 @@ class Session extends EventEmitter {
     this.resolveLocal = opts.resolveLocal || (() => null);
     // Native window to draw into (mpv --wid) for the in-app player, or null for mpv's own window.
     this.getWid = opts.getWid || (() => null);
+    // The user's own player volume (0-130, mpv's scale), remembered across videos and sessions.
+    this.getVolume = opts.getVolume || (() => 100);
 
     this.ws = null;
     this.closed = false;
@@ -105,6 +107,21 @@ class Session extends EventEmitter {
     this.loadedMediaId = null;
     old.quit(); // its 'exit' is ignored: this.mpv points at the new player by then
     await this.reopenPlayer();
+  }
+
+  /** Player volume, 0-130 (100 = the file's own level). Only affects this user. */
+  setVolume(v) {
+    const vol = Math.max(0, Math.min(130, Math.round(Number(v))));
+    if (!Number.isFinite(vol)) return;
+    this.ps.volume = vol;
+    if (this.mpv && this.playerOpen) this.mpv.set('volume', vol).catch(() => {});
+    if (vol > 0 && this.ps.muted) this.setMute(false); // dragging the slider up unmutes
+  }
+
+  setMute(on) {
+    this.ps.muted = !!on;
+    if (this.mpv && this.playerOpen) this.mpv.set('mute', !!on).catch(() => {});
+    this._emitUpdate(true);
   }
 
   /** Open the player and load the current video. Concurrent calls share one attempt. */
@@ -397,7 +414,8 @@ class Session extends EventEmitter {
     });
     const wid = this.getWid();
     this.embedded = !!wid;
-    await mpv.start({ title: 'Watch2Gether', extraArgs: wid ? ['--wid=' + wid] : [] });
+    const volume = Math.max(0, Math.min(130, Math.round(Number(this.getVolume()) || 0)));
+    await mpv.start({ title: 'Watch2Gether', extraArgs: [...(wid ? ['--wid=' + wid] : []), `--volume=${volume}`] });
     if (wid) {
       // Inside the app, fullscreen is the app's: f / double-click toggle it, Esc leaves it.
       for (const [key, msg] of [['f', 'w2g-fullscreen'], ['MBTN_LEFT_DBL', 'w2g-fullscreen'], ['ESC', 'w2g-exit-fullscreen']]) {
@@ -407,7 +425,7 @@ class Session extends EventEmitter {
     this.playerOpen = true;
     this.ps = { paused: true, timePos: null, duration: null, seeking: false, pausedForCache: false, cacheDur: 0, cacheIdle: false };
     this.speed = 1;
-    for (const p of ['pause', 'duration', 'seeking', 'paused-for-cache', 'demuxer-cache-duration', 'demuxer-cache-idle']) {
+    for (const p of ['pause', 'duration', 'seeking', 'paused-for-cache', 'demuxer-cache-duration', 'demuxer-cache-idle', 'volume', 'mute']) {
       await mpv.observe(p).catch(() => {});
     }
   }
@@ -468,6 +486,18 @@ class Session extends EventEmitter {
       case 'demuxer-cache-idle':
         this.ps.cacheIdle = !!value;
         break;
+      case 'volume':
+        // also follows the user's own volume keys / wheel inside the player
+        if (typeof value === 'number') {
+          this.ps.volume = Math.round(value);
+          this.emit('volume', this.ps.volume);
+        }
+        this._emitUpdate(true);
+        return;
+      case 'mute':
+        this.ps.muted = !!value;
+        this._emitUpdate(true);
+        return;
       default:
         return;
     }
@@ -685,6 +715,8 @@ class Session extends EventEmitter {
         source: this.source,
         drift: this.drift,
         speed: this.speed,
+        volume: this.ps.volume == null ? null : this.ps.volume,
+        muted: !!this.ps.muted,
       },
     });
   }
