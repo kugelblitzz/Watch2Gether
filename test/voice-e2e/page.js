@@ -27,11 +27,16 @@ navigator.mediaDevices.getUserMedia = async (constraints) => {
 
 async function makeInput(ctx, kind) {
   let speech = null;
-  if (kind.includes('speech')) speech = await ctx.decodeAudioData((await window.bridge.speechWav()).buffer.slice(0));
+  if (kind.includes('speech') || kind === 'faint') speech = await ctx.decodeAudioData((await window.bridge.speechWav()).buffer.slice(0));
   const len = speech ? speech.length : ctx.sampleRate * 3;
   const buf = ctx.createBuffer(1, len, ctx.sampleRate);
   const out = buf.getChannelData(0);
   if (speech) out.set(speech.getChannelData(0).subarray(0, len));
+  if (kind === 'faint') { // speech at ~-55 dB: like a friend's voice leaking back from speakers
+    const s = speech || (await ctx.decodeAudioData((await window.bridge.speechWav()).buffer.slice(0)));
+    const d = s.getChannelData(0);
+    for (let i = 0; i < len; i++) out[i] = d[i % d.length] * 0.006;
+  }
   if (kind.includes('noise')) {
     const amp = speech ? 0.03 : 0.05; // loud room noise (~-31 dBFS): fan, keyboard, traffic
     for (let i = 0; i < len; i++) out[i] += (Math.random() * 2 - 1) * amp;

@@ -10,6 +10,10 @@ const { parseInvite } = require('./util');
 const { initUpdater, installUpdate } = require('./updater');
 const { Hotkeys } = require('./hotkeys');
 
+// Echo cancellation must hear everything the app plays (voice is played through Web
+// Audio, not a WebRTC call), otherwise friends on speakers send our own voice back.
+app.commandLine.appendSwitch('enable-features', 'ChromeWideEchoCancellation');
+
 const hotkeys = new Hotkeys();
 hotkeys.on('action', (action, down) => send('hotkey', { action, down }));
 hotkeys.on('error', (e) => console.error('[hotkeys]', e && e.message));
@@ -296,7 +300,7 @@ if (!app.requestSingleInstanceLock()) {
     initUpdater((u) => send('app-update', u), () => !!session);
   });
   app.on('before-quit', () => { leave(); });
-  app.on('will-quit', () => hotkeys.stop());
+  app.on('will-quit', () => hotkeys.shutdown());
   app.on('window-all-closed', () => {
     leave();
     app.quit();

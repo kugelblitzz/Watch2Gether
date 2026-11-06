@@ -68,26 +68,40 @@ async function test(name, fn) {
   await test('left/right click can never be bound', async () => {
     hk.setBindings({ ptt: { type: 'mouse', button: 1, label: 'x' } }, true);
     assert.deepStrictEqual(hk.bindings, {});
-    assert.strictEqual(hk.running, false);
+    mouse(1, true);
+    assert.deepStrictEqual(events.splice(0), [], 'left click does nothing');
   });
 
-  await test('leaving voice releases a held push-to-talk and stops the hook', async () => {
+  await test('leaving voice releases a held push-to-talk; keys are ignored afterwards', async () => {
     hk.setBindings({ ptt: { type: 'key', code: KEYS.CapsLock, label: 'Caps Lock' } }, true);
     key(KEYS.CapsLock, true);
     hk.setBindings({ ptt: { type: 'key', code: KEYS.CapsLock, label: 'Caps Lock' } }, false);
     assert.deepStrictEqual(events.splice(0), ['ptt:down', 'ptt:up'], 'no stuck mic');
-    assert.strictEqual(hk.running, false);
     key(KEYS.CapsLock, true);
+    key(KEYS.CapsLock, false);
     assert.deepStrictEqual(events.splice(0), [], 'ignored once out of voice');
   });
 
-  await test('capturing a key: ignores left/right clicks, returns the next key, stops the hook again', async () => {
+  await test('the native hook is never stopped and restarted (that left it dead in v0.5.0)', async () => {
+    const starts = lib.hook.started;
+    for (let i = 0; i < 5; i++) {
+      hk.setBindings({ ptt: { type: 'key', code: KEYS.F9, label: 'F9' } }, i % 2 === 0); // join / leave voice
+      const p = hk.captureNext();
+      key(KEYS.F9, true); // choosing a key (resolves inside the key event)
+      await p;
+      hk.stop();
+    }
+    assert.strictEqual(lib.hook.started, starts, 'no extra starts');
+    assert.strictEqual(lib.hook.stopped, 0, 'never stopped');
+    assert.strictEqual(hk.running, true);
+  });
+
+  await test('capturing a key: ignores left/right clicks, returns the next key', async () => {
     const p = hk.captureNext();
     assert.strictEqual(hk.running, true, 'hook runs while choosing a key');
     mouse(1, true); mouse(2, true);
     key(KEYS.F9, true);
     assert.deepStrictEqual(await p, { type: 'key', code: KEYS.F9, label: 'F9' });
-    assert.strictEqual(hk.running, false);
     assert.deepStrictEqual(events.splice(0), [], 'captured key is not also an action');
   });
 
@@ -104,7 +118,12 @@ async function test(name, fn) {
     const q = hk.captureNext();
     hk.cancelCapture();
     assert.strictEqual(await q, null);
+  });
+
+  await test('quitting removes the native hook', async () => {
+    hk.shutdown();
     assert.strictEqual(hk.running, false);
+    assert.strictEqual(lib.hook.stopped, 1);
   });
 
   await test('a hook that fails to load reports an error instead of crashing', async () => {

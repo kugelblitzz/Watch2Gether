@@ -6,8 +6,15 @@
  *
  * Electron's globalShortcut only reports key *presses*, and push-to-talk needs
  * the release too, so this uses a low-level input hook (uiohook-napi).
- * Privacy: the hook runs only while voice needs it, and only the bound keys are
- * ever reported to the window; all other input is ignored here.
+ * Privacy: the hook starts the first time voice needs it, and only bound keys (or the
+ * one key being chosen in settings) are ever reported to the window; everything else
+ * is dropped right here.
+ *
+ * The native hook is started once and then left running until the app quits.
+ * Stopping and restarting it (e.g. stopping inside a key event when a key was just
+ * chosen, then starting again to watch the new key) left it silently dead in the
+ * installed app (v0.5.0): no events, no error. Whether input does anything is
+ * decided here instead (`enabled`, `capture`).
  *
  * Binding: { type: 'key', code: <uiohook keycode>, label } | { type: 'mouse', button: 3..5, label }
  */
@@ -68,10 +75,17 @@ class Hotkeys extends EventEmitter {
     }
   }
 
+  /** Out of voice: ignore everything (the native hook stays up; see above). */
   stop() {
     this.enabled = false;
     this.cancelCapture();
     this._sync();
+  }
+
+  /** App is quitting: remove the native hook. */
+  shutdown() {
+    this.stop();
+    if (this.running) this._stopHook();
   }
 
   // ---------- internals ----------
@@ -81,9 +95,7 @@ class Hotkeys extends EventEmitter {
   }
 
   _sync() {
-    const want = this._wanted();
-    if (want && !this.running) this._start();
-    else if (!want && this.running) this._stopHook();
+    if (this._wanted() && !this.running) this._start();
     if (!this.enabled) this._releaseAll();
   }
 

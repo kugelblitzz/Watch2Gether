@@ -47,7 +47,17 @@ const FRAME_SAMPLES = 960;       // 20 ms
 const VAD_TICK_MS = 20;
 const VAD_RELEASE_MS = 300;      // keep sending this long after speech, so word endings survive
 const SPEAKING_HOLD_MS = 250;
-const DENOISE_DEAD_TICKS = 75;   // 1.5 s of raw sound but digital silence after the model = model crashed
+const DENOISE_DEAD_TICKS = 75;
+// Automatic sensitivity: open this far above the room's noise floor, but never below
+// AUTO_MIN_DB. After AI noise removal the floor is very low, and a -62 dB minimum let
+// faint echo of a friend's voice (leaking from speakers, ~-55 dB) open the mic and get
+// sent back to them. A voice at the mic is typically -30 to -10 dBFS.
+const AUTO_MARGIN_DB = 15;
+const AUTO_MIN_DB = -50;
+const AUTO_MAX_DB = -25;
+// Echo guard: while someone else is talking, our mic must be this much louder to open,
+// so their voice leaking from our speakers isn't sent back. Talking over them still works.
+const ECHO_GUARD_DB = 8;   // 1.5 s of raw sound but digital silence after the model = model crashed
 const SETTINGS_KEY = 'w2g.voice';
 const AUDIO_MAGIC = 1;           // first byte of a binary voice frame
 const SCRIPT_URL = document.currentScript.src;
@@ -500,8 +510,11 @@ class VoiceEngine {
       // Track the room's noise floor: drop to quiet moments at once, creep up slowly.
       if (db < this.noiseFloor) this.noiseFloor = db;
       else this.noiseFloor += 0.04;
-      threshold = Math.max(-62, Math.min(-25, this.noiseFloor + 14));
+      threshold = Math.max(AUTO_MIN_DB, Math.min(AUTO_MAX_DB, this.noiseFloor + AUTO_MARGIN_DB));
     }
+    let othersTalking = false;
+    for (const p of this.peers.values()) if (p.speaking) othersTalking = true;
+    if (othersTalking) threshold += ECHO_GUARD_DB;
     this.thresholdNow = threshold;
     if (db > threshold) this.lastLoud = now;
 

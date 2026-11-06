@@ -269,6 +269,24 @@ app.whenReady().then(async () => {
       });
     }
 
+    if (speech) {
+      await test('faint sound (echo leaking from speakers, ~-55 dB) does not open the mic', async () => {
+        try {
+          await c.js(`fakeInput = 'faint'; engine.updateSettings({ noiseCancel: 'off', autoSensitivity: true })`);
+          await c.js('engine.setMicTest(true)');
+          await wait(800);
+          const lvl = await micLevel(c, 3000);
+          let opened = false;
+          for (let i = 0; i < 40; i++) { if (await c.js('engine.speaking')) opened = true; await wait(50); }
+          console.log(`       faint speech peaks at ${lvl.max.toFixed(1)} dB; mic opened: ${opened}`);
+          assert(lvl.max > -70 && lvl.max < -45, 'test input really is faint but present');
+          assert.strictEqual(opened, false);
+        } finally {
+          await c.js('engine.setMicTest(false); 0');
+        }
+      });
+    }
+
     await test('a broken noise model never leaves the mic dead: it falls back to standard suppression', async () => {
       try {
         await c.js(`fakeInput = 'noise'; badWasm = true; engine.wasmCache = {}; engine.updateSettings({ noiseCancel: 'gtcrn' })`);
