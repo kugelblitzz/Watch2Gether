@@ -33,6 +33,10 @@ const MIME = {
 
 /** A client that has been buffering this long while the room plays stops holding everyone up. */
 const STALL_LIMIT_MS = 20000;
+/** Sockets that never say hello are dropped after this long. */
+const HELLO_TIMEOUT_MS = 10000;
+/** Pressing play this close to the end starts the video over. */
+const RESTART_WINDOW_SECS = 1;
 
 function makeCode() {
   const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -40,8 +44,9 @@ function makeCode() {
 }
 
 class HostServer extends EventEmitter {
-  constructor({ port = 8787, allowLan = false, pauseOnBuffer = true } = {}) {
+  constructor({ port = 8787, allowLan = false, pauseOnBuffer = true, helloTimeoutMs = HELLO_TIMEOUT_MS } = {}) {
     super();
+    this.helloTimeoutMs = helloTimeoutMs;
     this.port = port;
     this.allowLan = allowLan;
     this.pauseOnBuffer = pauseOnBuffer;
@@ -61,6 +66,9 @@ class HostServer extends EventEmitter {
   // ---------- lifecycle ----------
 
   start() {
+    if (!Number.isInteger(this.port) || this.port < 1 || this.port > 65535) {
+      return Promise.reject(new Error(`Port ${this.port} is not valid. Use a number between 1024 and 65535.`));
+    }
     this.http = http.createServer((req, res) => this._onRequest(req, res));
     this.wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
     this.http.on('upgrade', (req, socket, head) => {
@@ -171,10 +179,13 @@ class HostServer extends EventEmitter {
     if (action === 'play') {
       if (!this.paused) return;
       this.paused = false;
+      const d = this.media.duration;
+      if (d && this.position >= d - RESTART_WINDOW_SECS) this.position = 0; // play at the end = watch again
       for (const c of this.clients.values()) if (c.buffering) c.stalledSince = Date.now();
       this._event(`${client.name} pressed play at ${formatTime(this.position)}`);
     } else if (action === 'pause') {
-      if (this.paused && !hasPos) return;
+      // Already paused there (e.g. two people pressed pause at once): nothing to do.
+      if (this.paused && (!hasPos || Math.abs(pos - this.position) < 0.25)) return;
       this.paused = true;
       if (hasPos) this.position = pos;
       this._event(`${client.name} paused at ${formatTime(this.position)}`);
@@ -211,6 +222,16 @@ class HostServer extends EventEmitter {
     if (mbps !== this.uploadMbps) {
       this.uploadMbps = mbps;
       this.membersDirty = true;
+    }
+
+    // Reached the end: pause the room there once, instead of each player reporting its own pause.
+    const d = this.media && this.media.duration;
+    if (!this.paused && d && this._currentPosition() >= d) {
+      this._rebase();
+      this.paused = true;
+      this.position = d;
+      this._event('Reached the end. Press play to watch again.');
+      this._broadcastState({ action: 'ended' });
     }
 
     if (!this.paused) {
@@ -344,6 +365,9 @@ class HostServer extends EventEmitter {
       rtt: null,
     };
     this.clients.set(client.id, client);
+    const helloTimer = setTimeout(() => {
+      if (!client.helloed) ws.terminate();
+    }, this.helloTimeoutMs);
 
     ws.on('message', (data) => {
       let msg;
@@ -352,6 +376,7 @@ class HostServer extends EventEmitter {
       this._onMessage(client, msg);
     });
     ws.on('close', () => {
+      clearTimeout(helloTimer);
       const wasWaiting = this._isWaiting();
       this._rebase();
       this.clients.delete(client.id);
@@ -399,8 +424,10 @@ class HostServer extends EventEmitter {
         if (typeof msg.buffering === 'boolean') this._setBuffering(client, msg.buffering);
         break;
       case 'media-info':
-        if (client.isHost && this.media && msg.mediaId === this.media.id && Number.isFinite(msg.duration) && msg.duration > 0) {
-          if (this.media.duration !== msg.duration) {
+        // The host's player is authoritative; a guest's is used until the host reports
+        // (e.g. the host closed their player window).
+        if (client.helloed && this.media && msg.mediaId === this.media.id && Number.isFinite(msg.duration) && msg.duration > 0) {
+          if ((client.isHost || !this.media.duration) && this.media.duration !== msg.duration) {
             this.media.duration = msg.duration;
             this._broadcastState();
           }

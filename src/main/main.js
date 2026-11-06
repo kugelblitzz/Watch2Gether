@@ -249,7 +249,7 @@ if (!app.requestSingleInstanceLock()) {
     loadSettings();
     registerIpc();
     createWindow();
-    initUpdater((u) => send('app-update', u));
+    initUpdater((u) => send('app-update', u), () => !!session);
   });
   app.on('before-quit', () => { leave(); });
   app.on('window-all-closed', () => {

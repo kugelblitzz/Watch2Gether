@@ -31,6 +31,8 @@ class Mpv extends EventEmitter {
       '--idle=yes',
       '--force-window=yes',
       '--keep-open=yes',
+      // At the end, stay on the last frame without toggling pause; the room clock decides.
+      '--keep-open-pause=no',
       '--input-ipc-server=' + this.pipe,
       '--hwdec=auto-safe',
       // Big read-ahead so 4K over the network survives hiccups.

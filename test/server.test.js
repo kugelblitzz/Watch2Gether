@@ -71,6 +71,7 @@ require.cache[require.resolve('../src/main/mpv')] = { exports: { Mpv: FakeMpv } 
 const { HostServer } = require('../src/main/server');
 const { Session } = require('../src/main/session');
 const { parseInvite, isAllowedAddress } = require('../src/main/util');
+const WebSocket = require('ws');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, ms = 3000, label = 'condition') {
@@ -220,6 +221,70 @@ async function test(name, fn) {
     await wait(500);
     hm._advance(); gm._advance();
     assert(Math.abs(hm.pos - gm.pos) < 0.15, `drift after resume ${hm.pos - gm.pos}`);
+  });
+
+  await test('reaching the end pauses the room once', async () => {
+    const before = guest.log.length;
+    host.command('seek', 598);
+    await until(() => Math.abs(hm.pos - 598) < 0.3 && Math.abs(gm.pos - 598) < 0.3, 2000, 'at 598');
+    host.command('play');
+    await until(() => server.paused && server.position === 600, 5000, 'room paused at end');
+    await wait(600);
+    const lines = guest.log.slice(before).map((l) => l.text);
+    assert(lines.some((t) => /Reached the end/.test(t)), lines.join(' | '));
+    assert(!lines.some((t) => /paused at/.test(t)), 'no per-player pause spam: ' + lines.join(' | '));
+  });
+
+  await test('play at the end starts over from 0', async () => {
+    guest.command('play');
+    await until(() => !server.paused && server._currentPosition() < 5, 2000, 'restarted');
+    await until(() => { hm._advance(); gm._advance(); return hm.pos < 5 && gm.pos < 5 && !hm.props.pause; }, 3000, 'players restarted');
+    host.command('pause');
+    await until(() => server.paused, 2000, 'paused');
+  });
+
+  await test('a second pause at the same spot is a no-op', async () => {
+    const before = guest.log.length;
+    guest.command('pause', server.position + 0.1);
+    await wait(300);
+    assert.strictEqual(guest.log.length, before, 'no extra log line');
+  });
+
+  await test('invalid port gives a friendly error', async () => {
+    const bad = new HostServer({ port: 70000 });
+    await assert.rejects(bad.start(), /not valid/);
+    assert(!bad.tick, 'no timer left running');
+  });
+
+  await test('sockets that never say hello are dropped', async () => {
+    const s2 = new HostServer({ port: port + 1, helloTimeoutMs: 200 });
+    await s2.start();
+    const ws = new WebSocket(`ws://127.0.0.1:${port + 1}/ws?k=${s2.code}`);
+    const closed = new Promise((r) => ws.on('close', r));
+    await new Promise((r) => ws.on('open', r));
+    assert.strictEqual(s2.clients.size, 1);
+    await closed;
+    await until(() => s2.clients.size === 0, 1000, 'server dropped the socket');
+    s2.stop();
+  });
+
+  await test('guest whose lobby is gone after a reconnect gets sent home', async () => {
+    const p2 = port + 2;
+    const s3 = new HostServer({ port: p2 });
+    await s3.start();
+    const g = new Session({ baseUrl: `http://127.0.0.1:${p2}`, code: s3.code, name: 'G2', mpvPath: 'fake' });
+    let ended = null;
+    g.on('ended', (r) => { ended = r; });
+    await g.start();
+    // host crashes (no polite close) and starts a new lobby on the same port
+    for (const c of s3.clients.values()) c.ws.terminate();
+    s3.stop();
+    const s4 = new HostServer({ port: p2 });
+    await s4.start();
+    await until(() => ended, 6000, 'session ended');
+    assert(/no longer exists/.test(ended), ended);
+    g.stop();
+    s4.stop();
   });
 
   await test('host changes video -> everyone reloads, paused at 0', async () => {

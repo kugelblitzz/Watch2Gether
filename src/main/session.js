@@ -90,10 +90,15 @@ class Session extends EventEmitter {
   }
 
   async reopenPlayer() {
-    if (this.playerOpen) return;
-    await this._startPlayer();
-    this.loadedMediaId = null;
-    await this._loadMedia();
+    if (this.playerOpen || this.reopening) return; // a double-click must not open two players
+    this.reopening = true;
+    try {
+      await this._startPlayer();
+      this.loadedMediaId = null;
+      await this._loadMedia();
+    } finally {
+      this.reopening = false;
+    }
   }
 
   // ---------- network ----------
@@ -125,9 +130,11 @@ class Session extends EventEmitter {
       });
       ws.on('unexpected-response', (req, res) => {
         req.destroy();
-        fail(new Error(res.statusCode === 403
+        const err = new Error(res.statusCode === 403
           ? 'The host refused the connection. Check the room code, and make sure you are connecting over Tailscale (a 100.x.y.z address).'
-          : `The host answered with HTTP ${res.statusCode}.`));
+          : `The host answered with HTTP ${res.statusCode}.`);
+        err.status = res.statusCode;
+        fail(err);
       });
       ws.on('error', (err) => fail(friendlyNetError(err, this.baseUrl)));
       ws.on('close', (code, reason) => {
@@ -155,7 +162,13 @@ class Session extends EventEmitter {
       try {
         await this._connect();
         this._log('Reconnected.');
-      } catch {
+      } catch (e) {
+        if (this.closed) return;
+        if (e && e.status === 403) {
+          // The host is back but with a different lobby (it restarted): this room is gone.
+          this.emit('ended', 'The lobby no longer exists. The host may have restarted it; ask for a new invite.');
+          return;
+        }
         this._scheduleReconnect();
       }
     }, 2000);
@@ -339,7 +352,7 @@ class Session extends EventEmitter {
         break;
       case 'duration':
         this.ps.duration = typeof value === 'number' ? value : null;
-        if (this.isHost && this.ps.duration && this.loadedMediaId) {
+        if (this.ps.duration && this.loadedMediaId) {
           this._send({ type: 'media-info', mediaId: this.loadedMediaId, duration: this.ps.duration });
         }
         break;

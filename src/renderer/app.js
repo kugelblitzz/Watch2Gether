@@ -211,12 +211,17 @@ $('seek').addEventListener('change', () => {
   api.cmd('seek', Number($('seek').value));
 });
 
+// Space toggles play/pause anywhere in the lobby except while typing. Holding it
+// down doesn't repeat, and a focused button (e.g. play/pause after a click) isn't
+// also "clicked" by the keyup, which would toggle twice.
+const isTyping = (t) => t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && t.type !== 'range' && t.type !== 'checkbox');
 document.addEventListener('keydown', (e) => {
-  if (!lobby || e.target.tagName === 'INPUT') return;
-  if (e.code === 'Space') {
-    e.preventDefault();
-    api.cmd('toggle');
-  }
+  if (!lobby || e.code !== 'Space' || isTyping(e.target)) return;
+  e.preventDefault();
+  if (!e.repeat) api.cmd('toggle');
+});
+document.addEventListener('keyup', (e) => {
+  if (lobby && e.code === 'Space' && !isTyping(e.target)) e.preventDefault();
 });
 
 $('chatForm').addEventListener('submit', (e) => {
@@ -228,10 +233,21 @@ $('chatForm').addEventListener('submit', (e) => {
 
 $('changeVideo').addEventListener('click', async () => {
   const f = await api.pickFile('Choose the next video');
-  if (f) await api.changeVideo(f.path);
+  if (!f) return;
+  try {
+    await api.changeVideo(f.path);
+  } catch (e) {
+    alert('Could not switch video: ' + cleanError(e));
+  }
 });
 
-$('reopen').addEventListener('click', () => api.reopenPlayer());
+$('reopen').addEventListener('click', async () => {
+  try {
+    await api.reopenPlayer();
+  } catch (e) {
+    alert('Could not reopen the player: ' + cleanError(e));
+  }
+});
 
 $('leave').addEventListener('click', async () => {
   if (lobby && lobby.role === 'host' && !confirm('Close the lobby for everyone?')) return;

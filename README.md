@@ -34,6 +34,12 @@ The video plays in an mpv window, and the Watch2Gether window shows the lobby, t
 | j | Switch subtitles (just you) |
 | 9 / 0 | Volume (just you) |
 
+When the video ends, the room pauses on the last frame. Press play to watch it again from the start.
+
+## Updates
+
+The app checks GitHub for a new release when it starts and downloads it in the background (it won't start a download while you're in a lobby). When it's ready, the top bar shows **Restart to update**; otherwise it installs the next time you close the app.
+
 ## Bandwidth (the one thing to check)
 
 Each streaming friend pulls the file's bitrate from the host's **upload** connection:

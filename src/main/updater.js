@@ -12,7 +12,12 @@ const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
 
 let updater = null;
 
-function initUpdater(notify) {
+/**
+ * @param notify  called with { state: 'downloading' | 'ready', version }
+ * @param isBusy  returns true while in a lobby; periodic checks wait, so a
+ *                download never competes with a stream mid-movie
+ */
+function initUpdater(notify, isBusy = () => false) {
   if (!app.isPackaged) return; // dev runs (npm start) have no app-update.yml
   ({ autoUpdater: updater } = require('electron-updater'));
   updater.autoDownload = true;
@@ -24,7 +29,7 @@ function initUpdater(notify) {
 
   const check = () => updater.checkForUpdates().catch((e) => console.error('[updater]', e && e.message));
   setTimeout(check, 5000);
-  setInterval(check, CHECK_EVERY_MS).unref();
+  setInterval(() => { if (!isBusy()) check(); }, CHECK_EVERY_MS).unref();
 }
 
 /** Quit and run the downloaded installer silently, then relaunch. */
