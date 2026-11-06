@@ -22,5 +22,9 @@ contextBridge.exposeInMainWorld('w2g', {
   appVersion: () => ipcRenderer.invoke('app:version'),
   installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
   onAppUpdate: (cb) => ipcRenderer.on('app-update', (_e, u) => cb(u)),
-  onEnded:(cb) => ipcRenderer.on('ended', (_e, reason) => cb(reason)),
+  voiceSend: (msg) => ipcRenderer.invoke('voice:send', msg),
+  onVoice: (cb) => ipcRenderer.on('voice', (_e, msg) => cb(msg)),
+  voiceAudio: (bytes) => ipcRenderer.send('voice:audio', bytes),
+  onVoiceAudio: (cb) => ipcRenderer.on('voice-audio', (_e, bytes) => cb(bytes)),
+  onEnded: (cb) => ipcRenderer.on('ended', (_e, reason) => cb(reason)),
 });

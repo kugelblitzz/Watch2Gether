@@ -117,7 +117,11 @@ class Session extends EventEmitter {
       };
 
       ws.on('open', () => this._send({ type: 'hello', name: this.name, hostToken: this.hostToken }));
-      ws.on('message', (data) => {
+      ws.on('message', (data, isBinary) => {
+        if (isBinary) {
+          this.emit('voice-audio', data);
+          return;
+        }
         let msg;
         try { msg = JSON.parse(data); } catch { return; }
         if (msg.type === 'welcome' && !welcomed) {
@@ -207,6 +211,11 @@ class Session extends EventEmitter {
       case 'chat':
         this._log(`${msg.from}: ${msg.text}`, 'chat');
         break;
+      case 'voice-peers':
+      case 'voice-peer-joined':
+      case 'voice-peer-left':
+        this.emit('voice', msg); // handled by the renderer's voice engine
+        break;
       default:
         break;
     }
@@ -260,6 +269,29 @@ class Session extends EventEmitter {
     if (action === 'pause' && position == null) position = this.ps.timePos != null ? this.ps.timePos : this._expectedPosition();
     if (action === 'seek' && !(typeof position === 'number' && Number.isFinite(position))) return;
     this._userCmd(action, position);
+  }
+
+  /** Voice-chat messages from the renderer; only these types go to the server. */
+  voiceSend(msg) {
+    if (!msg || typeof msg !== 'object') return;
+    switch (msg.type) {
+      case 'voice-join':
+      case 'voice-leave':
+        this._send({ type: msg.type });
+        break;
+      case 'voice-state':
+        this._send({ type: 'voice-state', muted: !!msg.muted, deafened: !!msg.deafened });
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** One encoded voice frame from the renderer (binary, relayed by the host). */
+  voiceAudio(bytes) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && bytes && bytes.length <= 1500) {
+      this.ws.send(bytes, { binary: true });
+    }
   }
 
   chat(text) {

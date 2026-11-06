@@ -9,6 +9,8 @@ const { getTailscaleInfo, findMpv, installMpvWithWinget, lanIp } = require('./en
 const { parseInvite } = require('./util');
 const { initUpdater, installUpdate } = require('./updater');
 
+
+
 const VIDEO_FILTERS = [
   { name: 'Videos', extensions: ['mkv', 'mp4', 'm4v', 'mov', 'avi', 'webm', 'ts', 'm2ts', 'wmv'] },
   { name: 'All files', extensions: ['*'] },
@@ -61,6 +63,8 @@ function send(channel, payload) {
 
 function wireSession(s) {
   s.on('update', (u) => send('update', { ...u, lobby: lobbyInfo }));
+  s.on('voice', (msg) => send('voice', msg));
+  s.on('voice-audio', (buf) => send('voice-audio', buf));
   s.on('ended', (reason) => {
     leave();
     send('ended', reason);
@@ -193,6 +197,12 @@ function registerIpc() {
   ipcMain.handle('session:cmd', (_e, { action, position }) => {
     if (session) session.command(action, position);
   });
+  ipcMain.handle('voice:send', (_e, msg) => {
+    if (session) session.voiceSend(msg);
+  });
+  ipcMain.on('voice:audio', (_e, bytes) => {
+    if (session && bytes instanceof Uint8Array) session.voiceAudio(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  });
   ipcMain.handle('session:chat', (_e, text) => {
     if (session) session.chat(text);
   });
@@ -231,6 +241,9 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The window usually sits behind the fullscreen player; voice activity
+      // detection and speaking indicators must keep running at full rate.
+      backgroundThrottling: false,
     },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
@@ -250,6 +263,12 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
   app.whenReady().then(() => {
+    // Only the microphone (voice chat) may be requested; deny everything else.
+    const { session: electronSession } = require('electron');
+    electronSession.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => {
+      cb(permission === 'media' && (!details.mediaTypes || details.mediaTypes.every((t) => t === 'audio')));
+    });
+    electronSession.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media');
     loadSettings();
     registerIpc();
     createWindow();

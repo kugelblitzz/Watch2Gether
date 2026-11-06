@@ -36,6 +36,18 @@ The video plays in an mpv window, and the Watch2Gether window shows the lobby, t
 
 When the video ends, the room pauses on the last frame. Press play to watch it again from the start.
 
+## Voice chat
+
+Click **Join voice** in the lobby to talk while you watch. It's optional, and everyone else keeps watching either way.
+
+- **Voice activity:** your mic only sends while you talk. Adjust the sensitivity under ⚙ → *Input sensitivity*, or leave it on automatic.
+- **Mute / deafen:** the mic and headphones buttons, or **Ctrl+Shift+M** / **Ctrl+Shift+D**.
+- **Per-person volume:** click someone in the lobby to set their volume (0–200 %) or mute them just for you. It's remembered by name.
+- **Settings (⚙):** input/output device, input/output volume, noise suppression, echo cancellation, automatic gain, voice quality (32–128 kbps), sound cues.
+- **Use headphones** if you can: the movie plays in mpv, outside the voice engine, so with speakers your friends may hear it through your mic.
+
+Voice goes over the same Tailscale connection as the lobby: the host relays each person's voice (Opus, ~64 kbps, only while they talk) to everyone else in voice.
+
 ## Updates
 
 The app checks GitHub for a new release when it starts and downloads it in the background (it won't start a download while you're in a lobby). When it's ready, the top bar shows **Restart to update**; otherwise it installs the next time you close the app.

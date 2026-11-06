@@ -287,6 +287,89 @@ async function test(name, fn) {
     s4.stop();
   });
 
+  console.log('voice');
+  await test('voice audio is relayed only between people in voice', async () => {
+    const vp = port + 3;
+    const vs = new HostServer({ port: vp });
+    await vs.start();
+    const connect = (name) => new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${vp}/ws?k=${vs.code}`);
+      const c = { ws, msgs: [], audio: [], id: null };
+      ws.on('message', (d, bin) => {
+        if (bin) { c.audio.push(Buffer.from(d)); return; }
+        const m = JSON.parse(d); c.msgs.push(m); if (m.type === 'welcome') { c.id = m.clientId; resolve(c); }
+      });
+      ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', name })));
+    });
+    const send = (c, m) => c.ws.send(JSON.stringify(m));
+    const got = (c, type) => c.msgs.filter((m) => m.type === type);
+    const a = await connect('A');
+    const b = await connect('B');
+    const c = await connect('C'); // never joins voice
+
+    send(a, { type: 'voice-join' });
+    await until(() => got(a, 'voice-peers').length === 1, 1000, 'A peers');
+    assert.deepStrictEqual(got(a, 'voice-peers')[0].peers, []);
+    send(b, { type: 'voice-join' });
+    await until(() => got(b, 'voice-peers').length === 1 && got(a, 'voice-peer-joined').length === 1, 1000, 'B joined');
+    assert.deepStrictEqual(got(b, 'voice-peers')[0].peers, [a.id], 'newcomer gets the list and makes the offers');
+    assert.strictEqual(got(a, 'voice-peer-joined')[0].id, b.id);
+
+    const frame = (seq, body) => Buffer.concat([Buffer.from([1, 0, 0, 0, seq]), Buffer.from(body)]);
+    b.ws.send(frame(7, 'opus!'), { binary: true });
+    await until(() => a.audio.length === 1, 1000, 'relayed');
+    const f = a.audio[0];
+    assert.strictEqual(f[0], 1);
+    assert.strictEqual(f.subarray(1, 9).toString('latin1'), b.id, 'tagged with the sender');
+    assert.strictEqual(f.readUInt32BE(9), 7);
+    assert.strictEqual(f.subarray(13).toString(), 'opus!');
+
+    c.ws.send(frame(1, 'x'), { binary: true });                  // C isn't in voice
+    b.ws.send(frame(2, 'x'.repeat(2000)), { binary: true });     // too big
+    b.ws.send(Buffer.from([9, 0, 0, 0, 0, 0]), { binary: true }); // not a voice frame
+    await wait(200);
+    assert.strictEqual(c.audio.length, 0, 'not in voice: hears nothing');
+    assert.strictEqual(b.audio.length, 0, 'talker does not get an echo');
+    assert.strictEqual(a.audio.length, 1, 'nothing else relayed');
+
+    send(a, { type: 'voice-state', muted: true, deafened: false });
+    await until(() => { const m = got(b, 'members').pop(); return m && m.list.find((x) => x.id === a.id).voice.muted; }, 500, 'mute shows up at once');
+    a.ws.send(frame(3, 'muted'), { binary: true });
+    send(b, { type: 'voice-state', muted: false, deafened: true });
+    await wait(100);
+    a.ws.send(frame(4, 'x'), { binary: true });
+    await wait(200);
+    assert.strictEqual(b.audio.length, 0, 'muted talkers are not relayed, deafened listeners get nothing');
+    const list = got(c, 'members').pop().list;
+    assert.strictEqual(list.find((x) => x.id === c.id).voice, null, 'C shown as not in voice');
+
+    b.ws.terminate();
+    await until(() => got(a, 'voice-peer-left').some((m) => m.id === b.id), 1000, 'peer-left on disconnect');
+    send(a, { type: 'voice-leave' });
+    await until(() => !vs._voicePeers(null).length, 1000, 'left');
+    a.ws.close(); c.ws.close();
+    vs.stop();
+  });
+
+  await test('sessions carry voice control + audio between the app and the server', async () => {
+    const hostGot = [];
+    const guestMsgs = [];
+    host.on('voice-audio', (b) => hostGot.push(Buffer.from(b)));
+    guest.on('voice', (m) => guestMsgs.push(m));
+    host.voiceSend({ type: 'voice-join' });
+    guest.voiceSend({ type: 'voice-join' });
+    guest.voiceSend({ type: 'bogus', evil: true }); // dropped, never reaches the server
+    await until(() => guestMsgs.some((m) => m.type === 'voice-peers' && m.peers.length === 1), 1000, 'guest sees host in voice');
+    guest.voiceAudio(Buffer.from([1, 0, 0, 0, 1, 42, 43]));
+    await until(() => hostGot.length === 1, 1000, 'host session receives the frame');
+    assert.deepStrictEqual([...hostGot[0].subarray(13)], [42, 43]);
+    guest.voiceAudio(Buffer.alloc(5000)); // oversized: never sent
+    host.voiceSend({ type: 'voice-leave' });
+    guest.voiceSend({ type: 'voice-leave' });
+    await until(() => guestMsgs.some((m) => m.type === 'voice-peer-left'), 1000, 'host left voice');
+    assert.strictEqual(hostGot.length, 1);
+  });
+
   await test('host changes video -> everyone reloads, paused at 0', async () => {
     const file2 = path.join(dir, 'other.mp4');
     fs.writeFileSync(file2, data.subarray(0, 1000));

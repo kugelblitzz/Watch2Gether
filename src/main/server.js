@@ -5,6 +5,8 @@
  *  - GET  /media/<id>?k=CODE   serves the chosen file with HTTP range support (no transcoding)
  *  - GET  /info?k=CODE         small JSON health check
  *  - WS   /ws?k=CODE           sync channel (play / pause / seek / buffering / chat)
+ *                                and voice chat: binary Opus frames from whoever is talking
+ *                                are relayed to everyone else in voice (only while they talk)
  *
  * The server owns the authoritative room clock:
  *   { paused, position, updatedAt }  -> current position = position + (now - updatedAt) while playing.
@@ -35,6 +37,9 @@ const MIME = {
 const STALL_LIMIT_MS = 20000;
 /** Sockets that never say hello are dropped after this long. */
 const HELLO_TIMEOUT_MS = 10000;
+/** Voice frames: [1][4-byte seq][opus] in, [1][8-byte sender id][4-byte seq][opus] out. */
+const VOICE_MAGIC = 1;
+const MAX_VOICE_FRAME = 1500; // a 20 ms Opus frame at 128 kbps is ~320 bytes
 /** Pressing play this close to the end starts the video over. */
 const RESTART_WINDOW_SECS = 1;
 
@@ -265,6 +270,7 @@ class HostServer extends EventEmitter {
         drift: c.drift,
         source: c.source,
         rtt: c.rtt,
+        voice: c.voice && { muted: c.voice.muted, deafened: c.voice.deafened },
       }));
     return { type: 'members', list, stats: { uploadMbps: this.uploadMbps, viewers: list.filter((c) => !c.isHost).length } };
   }
@@ -363,13 +369,18 @@ class HostServer extends EventEmitter {
       drift: 0,
       source: null,
       rtt: null,
+      voice: null, // { muted, deafened } while in voice chat
     };
     this.clients.set(client.id, client);
     const helloTimer = setTimeout(() => {
       if (!client.helloed) ws.terminate();
     }, this.helloTimeoutMs);
 
-    ws.on('message', (data) => {
+    ws.on('message', (data, isBinary) => {
+      if (isBinary) {
+        this._onVoiceFrame(client, data);
+        return;
+      }
       let msg;
       try { msg = JSON.parse(data); } catch { return; }
       if (!msg || typeof msg !== 'object') return;
@@ -380,6 +391,7 @@ class HostServer extends EventEmitter {
       const wasWaiting = this._isWaiting();
       this._rebase();
       this.clients.delete(client.id);
+      if (client.voice) this._voiceLeave(client, true);
       if (client.helloed) {
         this.membersDirty = true;
         this._event(`${client.name} left`);
@@ -439,9 +451,66 @@ class HostServer extends EventEmitter {
         if (text) this._broadcast({ type: 'chat', from: client.name, text, at: Date.now() });
         break;
       }
+      case 'voice-join':
+        if (client.helloed && !client.voice) this._voiceJoin(client);
+        break;
+      case 'voice-leave':
+        if (client.voice) this._voiceLeave(client, false);
+        break;
+      case 'voice-state':
+        if (!client.voice) return;
+        client.voice.muted = !!msg.muted;
+        client.voice.deafened = !!msg.deafened;
+        this._flushMembers(); // mute icons should change right away, not on the next tick
+        break;
       default:
         break;
     }
+  }
+
+  // ---------- voice chat ----------
+
+  /** Relay one talker's Opus frame to everyone else in voice who can hear it. */
+  _onVoiceFrame(client, data) {
+    const v = client.voice;
+    if (!v || v.muted || v.deafened) return;
+    if (data.length < 6 || data.length > MAX_VOICE_FRAME || data[0] !== VOICE_MAGIC) return;
+    const out = Buffer.allocUnsafe(data.length + 8);
+    out[0] = VOICE_MAGIC;
+    out.write(client.id, 1, 8, 'latin1');
+    data.copy(out, 9, 1);
+    for (const c of this.clients.values()) {
+      if (c === client || !c.voice || c.voice.deafened || c.ws.readyState !== 1) continue;
+      if (c.ws.bufferedAmount > 256 * 1024) continue; // a stalled listener drops audio, not the lobby
+      c.ws.send(out, { binary: true });
+    }
+  }
+
+  _voicePeers(except) {
+    return [...this.clients.values()].filter((c) => c.voice && c !== except);
+  }
+
+  _voiceJoin(client) {
+    client.voice = { muted: false, deafened: false };
+    // The newcomer makes the offers; everyone already in voice waits for them (no glare).
+    this._send(client, { type: 'voice-peers', peers: this._voicePeers(client).map((c) => c.id) });
+    for (const c of this._voicePeers(client)) this._send(c, { type: 'voice-peer-joined', id: client.id });
+    this._event(`${client.name} joined voice`);
+    this._flushMembers();
+  }
+
+  _voiceLeave(client, disconnected) {
+    client.voice = null;
+    for (const c of this._voicePeers(client)) this._send(c, { type: 'voice-peer-left', id: client.id });
+    if (!disconnected) {
+      this._event(`${client.name} left voice`);
+      this._flushMembers();
+    }
+  }
+
+  _flushMembers() {
+    this.membersDirty = false;
+    this._broadcast(this._membersMsg());
   }
 
   _event(text) {

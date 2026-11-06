@@ -116,6 +116,37 @@
           <h3>In the lobby</h3>
           <ul id="members"></ul>
           <div id="hostStats" class="stats"></div>
+
+          <div id="voiceBar" class="voice-bar">
+            <button id="voiceJoin" class="voice-join">
+              <svg class="vi" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>
+              Join voice
+            </button>
+            <div id="voiceControls" class="voice-controls hidden">
+              <div id="voiceStatus" class="voice-status">
+                <span class="vs-dot"></span>
+                <div class="vs-text"><b>Voice connected</b><span id="voiceSub" class="muted small"></span></div>
+              </div>
+              <div class="voice-buttons">
+                <button id="voiceMute" class="icon-btn" title="Mute (Ctrl+Shift+M)" aria-label="Mute">
+                  <svg class="vi" viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/><path class="strike" d="M4 4l16 16"/></svg>
+                </button>
+                <button id="voiceDeafen" class="icon-btn" title="Deafen (Ctrl+Shift+D)" aria-label="Deafen">
+                  <svg class="vi" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/><path class="strike" d="M4 4l16 16"/></svg>
+                </button>
+                <button id="voiceSettingsBtn" class="icon-btn" title="Voice &amp; audio settings" aria-label="Voice settings">
+                  <svg class="vi" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+                </button>
+                <button id="voiceLeave" class="icon-btn hangup" title="Leave voice" aria-label="Leave voice">
+                  <svg class="vi" viewBox="0 0 24 24"><path d="M3.5 14.5c4.7-4.7 12.3-4.7 17 0l-2 2.5-3.5-1.4v-2.4a9 9 0 0 0-6 0v2.4L5.5 17z"/></svg>
+                </button>
+              </div>
+            </div>
+            <div id="voiceTip" class="voice-tip hidden">
+              <span>Using speakers? Friends may hear the movie through your mic. Headphones work best.</span>
+              <button id="voiceTipClose" class="icon-btn small" aria-label="Dismiss">×</button>
+            </div>
+          </div>
         </div>
         <div class="panel chat">
           <h3>Activity</h3>
@@ -137,6 +168,59 @@
     </section>
   </main>
 
+  <!-- per-person volume menu -->
+  <div id="memberMenu" class="popover hidden" role="dialog" aria-label="User volume">
+    <div id="pmName" class="pm-name"></div>
+    <div class="pm-row"><span>User volume</span><span id="pmVolVal" class="muted"></span></div>
+    <input type="range" id="pmVol" class="slider" min="0" max="200" step="1">
+    <label class="check"><input type="checkbox" id="pmMute"> Mute for me</label>
+    <button id="pmReset" class="small">Reset</button>
+  </div>
+
+  <!-- voice settings sheet -->
+  <div id="voiceSettings" class="modal hidden" role="dialog" aria-label="Voice and audio settings">
+    <div class="sheet">
+      <header class="sheet-head">
+        <h2>Voice &amp; Audio</h2>
+        <button id="vsClose" class="icon-btn" aria-label="Close">×</button>
+      </header>
+
+      <div class="sheet-grid">
+        <label class="field"><span>Input device</span><select id="vsInput"></select></label>
+        <label class="field"><span>Output device</span><select id="vsOutput"></select></label>
+        <label class="field"><span>Input volume <output data-for="vsInVol"></output></span><input type="range" id="vsInVol" class="slider" min="0" max="200"></label>
+        <label class="field"><span>Output volume <output data-for="vsOutVol"></output></span><input type="range" id="vsOutVol" class="slider" min="0" max="200"></label>
+      </div>
+
+      <h3>Input sensitivity</h3>
+      <label class="check"><input type="checkbox" id="vsAuto"> Automatically determine input sensitivity</label>
+      <div id="vsMeter" class="meter"><div id="vsMeterFill" class="meter-fill"></div><div id="vsMeterMark" class="meter-mark"></div></div>
+      <div class="pm-row"><span class="muted small" id="vsMeterHint"></span><output class="muted small" data-for="vsThreshold"></output></div>
+      <input type="range" id="vsThreshold" class="slider" min="-100" max="0" step="1">
+      <p class="muted small">Voice activity: your mic only sends while you talk. The bar turns green when you'd be heard.</p>
+
+      <h3>Voice processing</h3>
+      <label class="check"><input type="checkbox" id="vsNs"> Noise suppression</label>
+      <label class="check"><input type="checkbox" id="vsEc"> Echo cancellation</label>
+      <label class="check"><input type="checkbox" id="vsAgc"> Automatic gain control</label>
+
+      <h3>Other</h3>
+      <div class="sheet-grid">
+        <label class="field"><span>Voice quality</span>
+          <select id="vsBitrate">
+            <option value="32000">32 kbps (saves data)</option>
+            <option value="64000">64 kbps (default)</option>
+            <option value="96000">96 kbps</option>
+            <option value="128000">128 kbps (best)</option>
+          </select>
+        </label>
+        <label class="check sheet-check"><input type="checkbox" id="vsCues"> Play sounds for join, leave, mute and deafen</label>
+      </div>
+    </div>
+  </div>
+
+  <script src="voice.js"></script>
   <script src="app.js"></script>
+  <script src="voice-ui.js"></script>
 </body>
 </html>

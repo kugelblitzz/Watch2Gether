@@ -212,6 +212,7 @@ function enterLobby() {
 function exitLobby(reason) {
   lobby = null;
   last = null;
+  voiceUi.onExitLobby();
   showScreen('screen-home');
   if (reason) showError(reason);
   refreshEnv();
@@ -247,7 +248,7 @@ $('seek').addEventListener('change', () => {
 // Space toggles play/pause anywhere in the lobby except while typing. Holding it
 // down doesn't repeat, and a focused button (e.g. play/pause after a click) isn't
 // also "clicked" by the keyup, which would toggle twice.
-const isTyping = (t) => t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && t.type !== 'range' && t.type !== 'checkbox');
+const isTyping = (t) => t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || !!t.closest('.modal') || (t.tagName === 'INPUT' && t.type !== 'range' && t.type !== 'checkbox');
 document.addEventListener('keydown', (e) => {
   if (!lobby || e.code !== 'Space' || isTyping(e.target)) return;
   e.preventDefault();
@@ -341,6 +342,7 @@ api.onUpdate((u) => {
   if (!lobby) return;
   last = u;
   render(u);
+  voiceUi.onUpdate(u);
 });
 
 function render(u) {
@@ -420,11 +422,13 @@ function renderMembers(u, media, dur) {
     if (!m.isHost && m.source === 'local') tags.push(el('span', { class: 'tag', text: 'local copy' }));
     const detail = m.lagging ? 'behind' : m.buffering ? 'buffering' : (m.rtt != null && !m.isHost ? `${m.rtt} ms` : '');
     const avatar = el('span', { class: 'avatar ' + avatarColor(m.name), text: initials(m.name) }, el('span', { class: dotClass }));
-    list.append(el('li', {},
+    const li = el('li', {},
       avatar,
       el('span', { class: 'member-name ellipsis', text: m.name }),
       ...tags,
-      el('span', { class: 'muted small', text: detail })));
+      el('span', { class: 'muted small', text: detail }));
+    decorateMember(li, m, u); // voice-ui.js
+    list.append(li);
   }
 
   const stats = $('hostStats');
