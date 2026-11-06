@@ -37,11 +37,26 @@ const MIME = {
 const STALL_LIMIT_MS = 20000;
 /** Sockets that never say hello are dropped after this long. */
 const HELLO_TIMEOUT_MS = 10000;
+/**
+ * Apps ping every 2 s. One that has been silent this long is gone (PC asleep, Wi-Fi or
+ * Tailscale dropped without a clean close): drop it, or it stays in the member list
+ * and in voice forever.
+ */
+const SILENT_CLIENT_MS = 15000;
 /** Voice frames: [1][4-byte seq][opus] in, [1][8-byte sender id][4-byte seq][opus] out. */
 const VOICE_MAGIC = 1;
 const MAX_VOICE_FRAME = 1500; // a 20 ms Opus frame at 128 kbps is ~320 bytes
 /** Pressing play this close to the end starts the video over. */
 const RESTART_WINDOW_SECS = 1;
+
+/** Parse a request URL, or null if it's malformed (a throw here would crash the app). */
+function parseUrl(raw) {
+  try {
+    return new URL(raw, 'http://x');
+  } catch {
+    return null;
+  }
+}
 
 function makeCode() {
   const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -53,9 +68,10 @@ class HostServer extends EventEmitter {
    * code / hostToken: reopen an earlier lobby under the same room code (after the host's
    * app restarts for an update), so guests' apps, which keep retrying, reconnect by themselves.
    */
-  constructor({ port = 8787, allowLan = false, pauseOnBuffer = true, helloTimeoutMs = HELLO_TIMEOUT_MS, code = null, hostToken = null } = {}) {
+  constructor({ port = 8787, allowLan = false, pauseOnBuffer = true, helloTimeoutMs = HELLO_TIMEOUT_MS, silentMs = SILENT_CLIENT_MS, code = null, hostToken = null } = {}) {
     super();
     this.helloTimeoutMs = helloTimeoutMs;
+    this.silentMs = silentMs;
     this.port = port;
     this.allowLan = allowLan;
     this.pauseOnBuffer = pauseOnBuffer;
@@ -82,8 +98,9 @@ class HostServer extends EventEmitter {
     this.http = http.createServer((req, res) => this._onRequest(req, res));
     this.wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
     this.http.on('upgrade', (req, socket, head) => {
-      const url = new URL(req.url, 'http://x');
-      if (url.pathname !== '/ws' || !this._authorize(req)) {
+      socket.on('error', () => { /* a dropped connection mid-handshake is not our problem */ });
+      const url = parseUrl(req.url);
+      if (!url || url.pathname !== '/ws' || !this._authorize(req)) {
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
@@ -97,7 +114,12 @@ class HostServer extends EventEmitter {
         if (err.code === 'EADDRINUSE') reject(new Error(`Port ${this.port} is already in use. Pick another port under Advanced.`));
         else reject(err);
       });
-      this.http.listen(this.port, () => resolve());
+      this.http.listen(this.port, () => {
+        // From here on, errors are logged instead of crashing the app (an 'error' event
+        // with no listener is fatal in Node).
+        this.http.on('error', (e) => console.error('[server]', e && e.message));
+        resolve();
+      });
     });
   }
 
@@ -265,6 +287,12 @@ class HostServer extends EventEmitter {
       }
     }
 
+    // Drop apps that went silent without closing their connection.
+    const now = Date.now();
+    for (const c of this.clients.values()) {
+      if (c.helloed && now - c.lastSeen > this.silentMs) c.ws.terminate(); // 'close' does the cleanup
+    }
+
     if (this.membersDirty) {
       this.membersDirty = false;
       this._broadcast(this._membersMsg());
@@ -292,7 +320,8 @@ class HostServer extends EventEmitter {
 
   _authorize(req) {
     if (!isAllowedAddress(req.socket.remoteAddress, this.allowLan)) return false;
-    const url = new URL(req.url, 'http://x');
+    const url = parseUrl(req.url);
+    if (!url) return false;
     const key = (url.searchParams.get('k') || '').toUpperCase();
     const a = Buffer.from(key);
     const b = Buffer.from(this.code);
@@ -305,7 +334,7 @@ class HostServer extends EventEmitter {
       res.end('Forbidden');
       return;
     }
-    const url = new URL(req.url, 'http://x');
+    const url = parseUrl(req.url); // valid: _authorize parsed it
     if (url.pathname === '/info') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ app: 'watch2gether', media: this._stateMsg().media }));
@@ -383,6 +412,7 @@ class HostServer extends EventEmitter {
       source: null,
       rtt: null,
       voice: null, // { muted, deafened, serverMuted } while in voice chat
+      lastSeen: Date.now(),
     };
     this.clients.set(client.id, client);
     const helloTimer = setTimeout(() => {
@@ -390,6 +420,7 @@ class HostServer extends EventEmitter {
     }, this.helloTimeoutMs);
 
     ws.on('message', (data, isBinary) => {
+      client.lastSeen = Date.now();
       if (isBinary) {
         this._onVoiceFrame(client, data);
         return;
@@ -523,7 +554,7 @@ class HostServer extends EventEmitter {
 
   _voiceJoin(client) {
     client.voice = { muted: false, deafened: false, serverMuted: this.serverMutedNames.has(client.name) };
-    // The newcomer makes the offers; everyone already in voice waits for them (no glare).
+    // The newcomer learns who's in voice; everyone else learns about the newcomer.
     this._send(client, { type: 'voice-peers', peers: this._voicePeers(client).map((c) => c.id) });
     for (const c of this._voicePeers(client)) this._send(c, { type: 'voice-peer-joined', id: client.id });
     this._event(`${client.name} joined voice`);

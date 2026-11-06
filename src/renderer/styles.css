@@ -641,3 +641,20 @@ body.fullscreen .stage-col .controls, body.fullscreen .stage-col .status-row { d
 
 /* neutral notice in the error spot (e.g. "getting you back into your lobby") */
 .error.info { background: rgba(10, 132, 255, .1); border-color: rgba(10, 132, 255, .3); color: var(--text); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+/* a file is being dragged over the window */
+body.dropping::after {
+  content: "Drop a video to play it";
+  position: fixed; inset: 12px; z-index: 100; pointer-events: none;
+  display: grid; place-items: center;
+  border: 2px dashed var(--accent); border-radius: 18px;
+  background: rgba(10, 132, 255, .12); color: var(--text); font-size: 18px; font-weight: 600;
+}
+
+/* "What's new" sheet */
+.whats-new { width: min(560px, 100%); }
+.whats-new-body h4 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.whats-new-body ul { margin: 0 0 6px; padding-left: 20px; }
+.whats-new-body li { margin: 5px 0; line-height: 1.45; }
+.whats-new-body p { margin: 6px 0; }
+.sheet-foot { display: flex; justify-content: flex-end; margin-top: 18px; }

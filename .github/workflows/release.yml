@@ -22,6 +22,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags: release notes fall back to the commits since the last release
 
       - uses: actions/setup-node@v4
         with:
@@ -77,11 +79,9 @@ jobs:
         shell: bash
         run: |
           v=${{ steps.ver.outputs.version }}
-          cat > "$RUNNER_TEMP/notes.md" <<EOF
-          Download **Watch2Gether-Setup-$v.exe** below and run it. See the [README](https://github.com/${{ github.repository }}#setup-everyone) for setup.
-
-          Bundles mpv (\`${{ steps.mpv.outputs.name }}\`, GPL, source at https://mpv.io).
-          EOF
+          # What's new: this version's section of CHANGELOG.md (or the commits since the last release)
+          node scripts/release-notes.js "$v" "${{ steps.mpv.outputs.name }}" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
           # latest.yml + blockmap are what installed clients' auto-updater reads.
           gh release create "v$v" dist/Watch2Gether-Setup-$v.exe \
             dist/Watch2Gether-Setup-$v.exe.blockmap dist/latest.yml \

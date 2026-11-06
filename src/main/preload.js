@@ -1,6 +1,6 @@
 'use strict';
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('w2g', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('w2g', {
   installMpv: () => ipcRenderer.invoke('mpv:install'),
   browseMpv: () => ipcRenderer.invoke('mpv:browse'),
   pickFile: (title) => ipcRenderer.invoke('file:pick', title),
+  /** Info about a file dropped on the window (Electron no longer exposes File.path). */
+  droppedFile: (file) => ipcRenderer.invoke('file:info', webUtils.getPathForFile(file)),
   host: (opts) => ipcRenderer.invoke('host:start', opts),
   changeVideo: (filePath) => ipcRenderer.invoke('host:change', filePath),
   join: (opts) => ipcRenderer.invoke('join', opts),
@@ -21,6 +23,7 @@ contextBridge.exposeInMainWorld('w2g', {
   onUpdate: (cb) => ipcRenderer.on('update', (_e, u) => cb(u)),
   appVersion: () => ipcRenderer.invoke('app:version'),
   checkUpdates: () => ipcRenderer.invoke('app:checkUpdates'),
+  whatsNew: () => ipcRenderer.invoke('app:whatsNew'),
   installUpdate: (voice) => ipcRenderer.invoke('app:installUpdate', voice),
   resumeInfo: () => ipcRenderer.invoke('app:resume'),
   onAppUpdate: (cb) => ipcRenderer.on('app-update', (_e, u) => cb(u)),

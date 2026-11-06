@@ -19,6 +19,9 @@ const SOFT_START = 0.08; // start nudging speed above this drift
 const SOFT_STOP = 0.03; // stop nudging below this drift
 const MAX_SPEED_NUDGE = 0.08; // +/- 8%
 const RESUME_CACHE_SECS = 5; // after a network stall, wait for this much buffer
+// The host answers our pings every 2 s. Silence this long means the connection died without
+// closing (host PC asleep, Wi-Fi / Tailscale dropped): drop it and start reconnecting.
+const SILENT_HOST_MS = 10000;
 
 class Session extends EventEmitter {
   constructor(opts) {
@@ -81,7 +84,14 @@ class Session extends EventEmitter {
     // pick later), and nobody gets an empty black window meanwhile.
     if (this.openPromise) await this.openPromise;
     this.timers.push(setInterval(() => this._sync(), SYNC_INTERVAL_MS));
-    this.timers.push(setInterval(() => this._ping(), 2000));
+    this.timers.push(setInterval(() => {
+      if (this.connected && Date.now() - this.lastRx > (this.silentHostMs || SILENT_HOST_MS)) {
+        this._log('No answer from the host. Reconnecting...');
+        try { this.ws.terminate(); } catch { /* ignore */ } // 'close' starts the reconnect
+        return;
+      }
+      this._ping();
+    }, 2000));
     this.timers.push(setInterval(() => this._sendStatus(), 2000));
     this.timers.push(setInterval(() => this._emitUpdate(), 500));
   }
@@ -163,6 +173,7 @@ class Session extends EventEmitter {
 
       ws.on('open', () => this._send({ type: 'hello', name: this.name, hostToken: this.hostToken }));
       ws.on('message', (data, isBinary) => {
+        this.lastRx = Date.now();
         if (isBinary) {
           this.emit('voice-audio', data);
           return;
@@ -172,6 +183,7 @@ class Session extends EventEmitter {
         if (msg.type === 'welcome' && !welcomed) {
           welcomed = true;
           this.connected = true;
+          this.lastRx = Date.now();
           settled = true;
           resolve();
         }
@@ -254,9 +266,11 @@ class Session extends EventEmitter {
         break;
       case 'event':
         this._log(msg.text);
+        this.emit('event', msg.text);
         break;
       case 'chat':
         this._log(`${msg.from}: ${msg.text}`, 'chat');
+        this.emit('chat', msg);
         break;
       case 'voice-peers':
       case 'voice-peer-joined':
@@ -297,7 +311,7 @@ class Session extends EventEmitter {
     const id = state.media ? state.media.id : null;
     if (id && !this.playerOpen) {
       // A (new) video and no player yet: open it. Not again for the same video if the
-      // user closed the window themselves; "Open player window" brings it back.
+      // user closed the window themselves; "Open player" brings it back.
       if (id !== this.autoOpenedFor) {
         this.autoOpenedFor = id;
         this.reopenPlayer().catch((e) => this._log('Could not open the player: ' + e.message));
@@ -414,7 +428,7 @@ class Session extends EventEmitter {
       this.loadedMediaId = null;
       this.loading = false;
       if (!this.closed) {
-        this._log('Player window closed. Click "Open player window" under the controls to get it back.');
+        this._log('Player closed. Click "Open player" on the video area to get it back.');
         this._updateBuffering();
         this._emitUpdate(true);
       }
@@ -422,7 +436,13 @@ class Session extends EventEmitter {
     const wid = this.getWid();
     this.embedded = !!wid;
     const volume = Math.max(0, Math.min(130, Math.round(Number(this.getVolume()) || 0)));
-    await mpv.start({ title: 'Watch2Gether', extraArgs: [...(wid ? ['--wid=' + wid] : []), `--volume=${volume}`] });
+    const keep = [`--volume=${volume}`];
+    if (this.ps && this.ps.muted) keep.push('--mute=yes'); // e.g. switching between in-app and popped out
+    await mpv.start({ title: 'Watch2Gether', extraArgs: [...(wid ? ['--wid=' + wid] : []), ...keep] });
+    // keep the movie lowered if friends are talking right now
+    if (this.duckLevel != null && this.duckLevel < 1) {
+      mpv.command('af-command', 'w2gduck', 'volume', this.duckLevel.toFixed(3), 'volume').catch(() => {});
+    }
     if (wid) {
       // Inside the app, fullscreen is the app's: f / double-click toggle it, Esc leaves it.
       for (const [key, msg] of [['f', 'w2g-fullscreen'], ['MBTN_LEFT_DBL', 'w2g-fullscreen'], ['ESC', 'w2g-exit-fullscreen'], ['TAB', 'w2g-sidebar']]) {
@@ -430,7 +450,7 @@ class Session extends EventEmitter {
       }
     }
     this.playerOpen = true;
-    this.ps = { paused: true, timePos: null, duration: null, seeking: false, pausedForCache: false, cacheDur: 0, cacheIdle: false };
+    this.ps = { paused: true, timePos: null, duration: null, seeking: false, pausedForCache: false, cacheDur: 0, cacheIdle: false, volume, muted: keep.includes('--mute=yes') };
     this.speed = 1;
     for (const p of ['pause', 'duration', 'seeking', 'paused-for-cache', 'demuxer-cache-duration', 'demuxer-cache-idle', 'volume', 'mute']) {
       await mpv.observe(p).catch(() => {});

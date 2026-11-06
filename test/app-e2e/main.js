@@ -294,6 +294,19 @@ app.whenReady().then(async () => {
       await until(async () => (await js('!!last.player.open')) && videoWindow().isVisible(), 10000, 'player back in the app');
     });
 
+    await test('the member list is not rebuilt when nothing changed (tooltips stay put)', async () => {
+      await js('window.__li = document.querySelector("#members li"); 0');
+      await wait(1600); // three or more lobby updates
+      assert.strictEqual(await js('document.querySelector("#members li") === window.__li'), true);
+    });
+
+    await test('the window cannot be navigated away from the app (e.g. by a dropped file)', async () => {
+      await js('location.href = "file:///C:/"; 0').catch(() => {});
+      await wait(800);
+      assert.match(win.webContents.getURL(), /renderer\/index\.html$/);
+      assert.strictEqual(await js('!!lobby'), true, 'still in the lobby');
+    });
+
     await test('no page errors during the whole run', async () => {
       assert.deepStrictEqual(pageErrors, []);
     });

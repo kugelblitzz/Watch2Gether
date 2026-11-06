@@ -83,7 +83,14 @@ async function participant(server, name, speechFile, { host = false } = {}) {
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws?k=${server.code}`);
   const p = { name, win, ws, id: null };
   await new Promise((resolve) => {
-    ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', name, hostToken: host ? server.hostToken : undefined })));
+    ws.on('open', () => {
+      ws.send(JSON.stringify({ type: 'hello', name, hostToken: host ? server.hostToken : undefined }));
+      // ping like the real app does, or the server drops us as a dead connection after 15 s
+      const t = setInterval(() => {
+        if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping', t0: Date.now() }));
+        else clearInterval(t);
+      }, 2000);
+    });
     ws.on('message', (d, isBinary) => {
       if (win.isDestroyed()) return;
       if (isBinary) {

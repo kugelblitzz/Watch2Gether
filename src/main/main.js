@@ -9,6 +9,7 @@ const { getTailscaleInfo, findMpv, installMpvWithWinget, lanIp } = require('./en
 const { parseInvite, cursorXInWindow } = require('./util');
 const { initUpdater, installUpdate, checkNow, checkAfterLobby } = require('./updater');
 const { Hotkeys } = require('./hotkeys');
+const { sectionFor } = require('./changelog');
 
 // Echo cancellation must hear everything the app plays (voice is played through Web
 // Audio, not a WebRTC call), otherwise friends on speakers send our own voice back.
@@ -23,10 +24,22 @@ const NOISE_WASM = { gtcrn: 'gtcrn.wasm' };
 
 
 
+const VIDEO_EXTS = ['mkv', 'mp4', 'm4v', 'mov', 'avi', 'webm', 'ts', 'm2ts', 'wmv'];
 const VIDEO_FILTERS = [
-  { name: 'Videos', extensions: ['mkv', 'mp4', 'm4v', 'mov', 'avi', 'webm', 'ts', 'm2ts', 'wmv'] },
+  { name: 'Videos', extensions: VIDEO_EXTS },
   { name: 'All files', extensions: ['*'] },
 ];
+
+/** { path, name, size } for a video file, or null (drag & drop, file picker). */
+function videoFileInfo(p) {
+  try {
+    const st = fs.statSync(p);
+    if (!st.isFile()) return null;
+    return { path: p, name: path.basename(p), size: st.size, isVideo: VIDEO_EXTS.includes(path.extname(p).slice(1).toLowerCase()) };
+  } catch {
+    return null;
+  }
+}
 const DEFAULT_PORT = 8787;
 
 let win = null;
@@ -80,9 +93,11 @@ function settingsFile() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
+let hadSettings = false; // false on a fresh install
 function loadSettings() {
   try {
     settings = { ...settings, ...JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) };
+    hadSettings = true;
   } catch { /* first run */ }
 }
 
@@ -126,6 +141,16 @@ function wireSession(s) {
   s.on('voice-audio', (buf) => send('voice-audio', buf));
   s.on('volume', (v) => {
     if (v !== settings.volume) saveVolumeSoon(v);
+  });
+  // Chat while you're elsewhere: flash the taskbar button; in fullscreen (sidebar hidden),
+  // show chat and people coming / going on the video itself for a few seconds.
+  s.on('chat', (m) => {
+    if (!win) return;
+    if (!win.isFocused()) win.flashFrame(true);
+    if (m.from !== s.name && win.isFullScreen() && s.embedded) s.osd(`${m.from}: ${m.text}`, 5000);
+  });
+  s.on('event', (text) => {
+    if (win && win.isFullScreen() && s.embedded && /(joined|left)( voice)?( \(host\))?$/.test(text)) s.osd(text, 3000);
   });
   s.on('player-request', (r) => {
     if (!win) return;
@@ -189,11 +214,19 @@ function registerIpc() {
   });
 
   ipcMain.handle('file:pick', async (_e, title) => {
-    const r = await dialog.showOpenDialog(win, { title: title || 'Choose a video', filters: VIDEO_FILTERS, properties: ['openFile'] });
+    const r = await dialog.showOpenDialog(win, {
+      title: title || 'Choose a video',
+      filters: VIDEO_FILTERS,
+      properties: ['openFile'],
+      defaultPath: settings.lastDir && fs.existsSync(settings.lastDir) ? settings.lastDir : undefined,
+    });
     if (r.canceled || !r.filePaths[0]) return null;
-    const p = r.filePaths[0];
-    return { path: p, name: path.basename(p), size: fs.statSync(p).size };
+    const info = videoFileInfo(r.filePaths[0]);
+    if (info) saveSettings({ lastDir: path.dirname(info.path) }); // start there next time
+    return info;
   });
+  // A file dropped on the window (path from the preload's webUtils).
+  ipcMain.handle('file:info', (_e, p) => (typeof p === 'string' ? videoFileInfo(p) : null));
 
   ipcMain.handle('host:start', async (_e, { name, filePath, port, allowLan, resume }) => {
     // resume: { code, hostToken, mediaId, position } to reopen the lobby we had before an update
@@ -334,6 +367,17 @@ function registerIpc() {
   });
   ipcMain.handle('app:version', () => app.getVersion());
   ipcMain.handle('app:checkUpdates', () => checkNow());
+  /** After an update (not a fresh install), once: this version's CHANGELOG.md section. */
+  ipcMain.handle('app:whatsNew', () => {
+    const version = app.getVersion();
+    const prev = settings.lastSeenVersion;
+    if (prev === version) return null;
+    saveSettings({ lastSeenVersion: version });
+    // no record yet: an existing settings file means this was an update from <= 0.7.0
+    const updated = prev ? prev !== version : hadSettings;
+    const notes = updated ? sectionFor(version) : null;
+    return notes ? { version, notes } : null;
+  });
   ipcMain.handle('app:installUpdate', async (_e, voice) => {
     saveResume(voice); // come straight back to this lobby after the update
     await leave({ restarting: true });
@@ -353,10 +397,23 @@ function registerIpc() {
 
 // ---------- window ----------
 
+/** The saved window position, if it's still on a connected screen. */
+function savedBounds() {
+  const b = settings.window;
+  if (!b || !Number.isFinite(b.x) || !Number.isFinite(b.width)) return null;
+  const visible = screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return b.x + 80 < a.x + a.width && b.x + b.width - 80 > a.x && b.y >= a.y - 10 && b.y + 40 < a.y + a.height;
+  });
+  return visible ? b : null;
+}
+
 function createWindow() {
+  const saved = savedBounds();
   win = new BrowserWindow({
-    width: 1040,
-    height: 760,
+    width: saved ? saved.width : 1040,
+    height: saved ? saved.height : 760,
+    ...(saved ? { x: saved.x, y: saved.y } : {}),
     minWidth: 760,
     minHeight: 560,
     backgroundColor: '#0b0b0d',
@@ -376,7 +433,17 @@ function createWindow() {
       backgroundThrottling: false,
     },
   });
+  if (saved && saved.maximized) win.maximize();
+  // The window only ever shows the app: no navigating away (e.g. to a file dropped on it,
+  // which Chromium would otherwise open in place of the UI), no pop-up windows.
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  // remember size / position (the normal bounds, not fullscreen or maximized)
+  win.on('close', () => {
+    saveSettings({ window: { ...win.getNormalBounds(), maximized: win.isMaximized() } });
+  });
+  win.on('focus', () => win.flashFrame(false));
   win.webContents.on('console-message', (_e, level, message, line, source) => {
     if (level >= 2) console.error(`[renderer] ${message} (${source}:${line})`);
   });
@@ -414,6 +481,7 @@ function createWindow() {
     lastX = null;
     send('fullscreen', false);
   });
+  win.on('closed', () => clearInterval(edgeTimer));
 }
 
 if (!app.requestSingleInstanceLock()) {

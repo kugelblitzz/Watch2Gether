@@ -123,6 +123,15 @@ async function test(name, fn) {
     const left = { x: -1920, y: 0, width: 1920, height: 1080 }; // monitor placed left of the primary
     assert.strictEqual(cursorXInWindow({ x: -1915, y: 10 }, left), 5);
   });
+  await test('changelog: the section for a version (What is new + release notes)', () => {
+    const { sectionFor } = require('../src/main/changelog');
+    const md = ['# Changelog', '', '## 1.2.0', '', '- **New** thing', '- fix', '', '## 1.1.0', '', '- old'].join('\n');
+    assert.strictEqual(sectionFor('1.2.0', md), '- **New** thing\n- fix');
+    assert.strictEqual(sectionFor('1.1.0', md), '- old');
+    assert.strictEqual(sectionFor('9.9.9', md), null);
+    const pkg = require('../package.json');
+    assert(sectionFor(pkg.version), `CHANGELOG.md has a section for the current version ${pkg.version}`);
+  });
   await test('address filter', () => {
     assert(isAllowedAddress('::ffff:100.64.0.1', false));
     assert(isAllowedAddress('100.127.255.1', false));
@@ -611,6 +620,80 @@ async function test(name, fn) {
     s4.setMedia(file, { id: '../../etc', position: -5 });
     assert.match(s4.media.id, /^[a-f0-9]{16}$/);
     assert.strictEqual(s4.position, 0);
+  });
+
+  await test('a guest whose connection silently died is dropped (no ghost members / voice)', async () => {
+    const sp = port + 11;
+    const ss = new HostServer({ port: sp, silentMs: 400 });
+    await ss.start();
+    const ws = new WebSocket(`ws://127.0.0.1:${sp}/ws?k=${ss.code}`);
+    await new Promise((r) => ws.on('open', r));
+    ws.send(JSON.stringify({ type: 'hello', name: 'Ghost' }));
+    ws.send(JSON.stringify({ type: 'voice-join' }));
+    await until(() => ss._membersMsg().list.length === 1, 1000, 'joined');
+    // then: nothing (no pings), like a laptop that went to sleep without closing the socket
+    await until(() => ss._membersMsg().list.length === 0 && !ss._voicePeers(null).length, 4000, 'dropped');
+    ws.terminate();
+    ss.stop();
+  });
+
+  await test('a guest notices a host that went silent and reconnects', async () => {
+    const { WebSocketServer } = require('ws');
+    const hp = port + 12;
+    let connections = 0;
+    const fake = new WebSocketServer({ port: hp });
+    fake.on('connection', (sock) => {
+      connections++;
+      sock.on('message', (d) => {
+        const m = JSON.parse(d);
+        // welcome, then never answer anything again (but keep the socket open)
+        if (m.type === 'hello') sock.send(JSON.stringify({ type: 'welcome', clientId: 'abcd1234', state: { paused: true, position: 0, updatedAt: Date.now(), media: null }, members: [] }));
+      });
+    });
+    const g = new Session({ baseUrl: `http://127.0.0.1:${hp}`, code: 'ABCDEF', name: 'G', mpvPath: 'fake' });
+    g.silentHostMs = 1500;
+    await g.start();
+    await until(() => g.log.some((l) => /No answer from the host/.test(l.text)), 8000, 'noticed');
+    await until(() => connections >= 2, 6000, 'reconnected');
+    g.stop();
+    fake.close();
+  });
+
+  await test('a malformed request is refused without crashing the host', async () => {
+    const net = require('net');
+    const res = await new Promise((resolve) => {
+      const sock = net.connect(port, '127.0.0.1', () => sock.write('GET //[ HTTP/1.1\r\nHost: x\r\n\r\n'));
+      let out = '';
+      sock.on('data', (d) => { out += d; });
+      sock.on('close', () => resolve(out));
+      sock.on('error', () => resolve(out));
+      setTimeout(() => sock.destroy(), 1000);
+    });
+    assert(!/^HTTP\/1\.1 200/.test(res), 'not served');
+    const ok = await get(`${base}/info?k=${server.code}`);
+    assert.strictEqual(ok.status, 200, 'host still up');
+  });
+
+  await test('switching in-app <-> popped out keeps mute and a lowered movie', async () => {
+    const kp = port + 13;
+    const ks = new HostServer({ port: kp });
+    await ks.start();
+    ks.setMedia(file);
+    let wid = '1';
+    const before = FakeMpv.instances.length;
+    const g7 = new Session({ baseUrl: `http://127.0.0.1:${kp}`, code: ks.code, name: 'G7', mpvPath: 'fake', getWid: () => wid, getVolume: () => 80 });
+    await g7.start();
+    await until(() => FakeMpv.instances.length === before + 1 && FakeMpv.instances[before].loaded, 2000, 'open');
+    g7.setMute(true);
+    g7.duck(0.4);
+    await wait(300);
+    wid = null;
+    await g7.restartPlayer();
+    const p2 = FakeMpv.instances[before + 1];
+    assert(p2.startOpts.extraArgs.includes('--mute=yes'), 'still muted');
+    assert(p2.startOpts.extraArgs.includes('--volume=80'));
+    assert.deepStrictEqual(p2.afCommands && p2.afCommands[0], ['w2gduck', 'volume', '0.400', 'volume'], 'still lowered');
+    g7.stop(); ks.stop();
   });
 
   await test('host changes video -> everyone reloads, paused at 0', async () => {

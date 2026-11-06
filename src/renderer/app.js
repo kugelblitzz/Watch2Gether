@@ -212,6 +212,7 @@ function showScreen(id) {
 // ---------- lobby ----------
 
 function enterLobby() {
+  membersKey = null;
   document.body.classList.add('in-lobby');
   showScreen('screen-lobby');
   setTimeout(syncStage, 700); // after the screen transition settles
@@ -296,6 +297,41 @@ async function chooseVideo() {
   }
 }
 $('changeVideo').addEventListener('click', chooseVideo);
+
+// ---------- drag & drop a video onto the window ----------
+
+const hasFiles = (e) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+document.addEventListener('dragover', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); // also stops Chromium from opening the file in place of the app
+  e.dataTransfer.dropEffect = 'copy';
+  document.body.classList.add('dropping');
+});
+document.addEventListener('dragleave', (e) => {
+  if (!e.relatedTarget) document.body.classList.remove('dropping');
+});
+document.addEventListener('drop', async (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  document.body.classList.remove('dropping');
+  const file = e.dataTransfer.files[0];
+  const info = file && (await api.droppedFile(file));
+  if (!info) return;
+  if (!info.isVideo && !confirm(`"${info.name}" doesn't look like a video. Use it anyway?`)) return;
+  if (!lobby) {
+    hostFile = info; // home screen: this is the video to host
+    $('pickedFile').textContent = `${info.name} (${fmtBytes(info.size)})`;
+    $('pickedFile').title = info.path;
+  } else if (lobby.role === 'host') {
+    try {
+      await api.changeVideo(info.path);
+    } catch (err) {
+      alert('Could not switch video: ' + cleanError(err));
+    }
+  } else {
+    alert('Only the host can change the video.');
+  }
+});
 $('pickNow').addEventListener('click', chooseVideo);
 $('pickNow2').addEventListener('click', chooseVideo);
 
@@ -311,7 +347,7 @@ function videoShown() {
   return !!(lobby && u && u.room && u.room.media && u.player && u.player.open
     && playerMode === 'embedded'
     && !$('screen-lobby').classList.contains('hidden')
-    && $('voiceSettings').classList.contains('hidden')); // a native window would cover the dialog
+    && !document.querySelector('.modal:not(.hidden)')); // a native window would cover any dialog
 }
 
 /** Put the native video window exactly over #stage (or hide it). */
@@ -333,7 +369,7 @@ new ResizeObserver(syncStage).observe($('stage'));
 window.addEventListener('resize', syncStage);
 $('sidebar').addEventListener('transitionend', syncStage);
 // the voice settings dialog opens and closes in voice-ui.js; hide the video while it's up
-new MutationObserver(syncStage).observe($('voiceSettings'), { attributes: true, attributeFilter: ['class'] });
+for (const m of document.querySelectorAll('.modal')) new MutationObserver(syncStage).observe(m, { attributes: true, attributeFilter: ['class'] });
 
 async function setPlayerMode(mode) {
   playerMode = mode;
@@ -550,6 +586,41 @@ $('appUpdateBtn').addEventListener('click', () => {
   api.installUpdate({ inVoice: voice.joined, muted: voice.muted, deafened: voice.deafened });
 });
 
+// ---------- "What's new" after an update ----------
+
+/** Minimal, safe markdown: "**Heading**" lines, "- " bullets, **bold** inside text. */
+function inlineBold(text) {
+  const out = [];
+  text.split(/(\*\*[^*]+\*\*)/).forEach((part) => {
+    if (/^\*\*[^*]+\*\*$/.test(part)) out.push(el('b', { text: part.slice(2, -2) }));
+    else if (part) out.push(document.createTextNode(part));
+  });
+  return out;
+}
+function showWhatsNew(info) {
+  if (!info || !info.notes) return;
+  $('whatsNewTitle').textContent = `What's new in v${info.version}`;
+  const body = $('whatsNewBody');
+  body.replaceChildren();
+  let list = null;
+  for (const raw of info.notes.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) { list = null; continue; }
+    if (line.startsWith('- ')) {
+      if (!list) body.append((list = el('ul')));
+      list.append(el('li', {}, ...inlineBold(line.slice(2))));
+    } else {
+      list = null;
+      body.append(el(/^\*\*[^*]+\*\*$/.test(line) ? 'h4' : 'p', {}, ...inlineBold(line.replace(/^\*\*|\*\*$/g, ''))));
+    }
+  }
+  $('whatsNew').classList.remove('hidden');
+}
+const closeWhatsNew = () => $('whatsNew').classList.add('hidden');
+$('whatsNewClose').addEventListener('click', closeWhatsNew);
+$('whatsNewOk').addEventListener('click', closeWhatsNew);
+$('whatsNew').addEventListener('click', (e) => { if (e.target === $('whatsNew')) closeWhatsNew(); });
+
 // ---------- back into the lobby after "Restart to update" ----------
 
 const RESUME_GUEST_WAIT_MS = 90000; // the host may be restarting for the update too
@@ -692,7 +763,13 @@ function initials(name) {
   return s.toUpperCase();
 }
 
+let membersKey = null;
 function renderMembers(u, media, dur) {
+  // Rebuilt only when something shown changed: updates arrive twice a second, and
+  // rebuilding each time made hover tooltips flicker away.
+  const key = JSON.stringify([u.members, u.me, u.stats, media && media.id, Math.round(dur || 0), peerPrefs]); // peerPrefs: voice-ui.js
+  if (key === membersKey) return;
+  membersKey = key;
   const list = $('members');
   list.replaceChildren();
   for (const m of u.members || []) {
@@ -759,4 +836,5 @@ function renderLog(log) {
   showScreen('screen-home');
   await refreshEnv();
   await resumeAfterUpdate();
+  showWhatsNew(await api.whatsNew());
 })();

@@ -28,6 +28,8 @@ Everything is in one window, Discord-style: the lobby, members, voice and chat o
 - **Fullscreen** (button, **F**, or double-click the video): just the movie. Move the mouse to the left edge and the sidebar slides in; move away (or onto another monitor) and it hides again. **Tab** pins the sidebar open or closes it. **Esc** leaves fullscreen.
 - The mouse pointer hides over the video after 2 seconds without movement.
 - **Pop out** (button next to fullscreen): the movie moves into its own window (mpv's own fullscreen with **f** works there). **Bring it back** puts it back in the app.
+- **Drag & drop** a video onto the window to host it (home screen) or switch to it (in a lobby you host).
+- In fullscreen, chat messages and people joining or leaving show up on the video for a few seconds. When the app is in the background, a new chat message flashes its taskbar button.
 
 You can control playback from the app or from the video itself:
 
@@ -63,6 +65,8 @@ The app checks GitHub for a new release when it starts, every 30 minutes, and ri
 
 **Restart to update** brings you straight back: the app reopens or rejoins the lobby you were in (same invite, same video, same spot, paused) and rejoins voice with the same mute / deafen state. If the host is the one updating, everyone else's app waits and reconnects by itself.
 
+After an update, a short **What's new** shows what changed (from [CHANGELOG.md](CHANGELOG.md)).
+
 ## Bandwidth (the one thing to check)
 
 Each streaming friend pulls the file's bitrate from the host's **upload** connection:
@@ -83,6 +87,10 @@ The lobby shows the file's average bitrate, the upload it needs and the actual u
   - The room code is wrong, or you aren't connecting through a `100.x.y.z` Tailscale address.
   - LAN connections are off by default. The host can turn them on under *Advanced*.
 - **Stuttering:** run `tailscale status` and check whether the friend's line says `relay`. If it does, Tailscale couldn't make a direct connection and the bandwidth is limited. Restarting Tailscale or the router often fixes it. Some networks can't connect directly (CGNAT on both sides), and local-copy mode is the fallback for those.
+
+## Contributing
+
+See [AGENTS.md](AGENTS.md) for how the code fits together, the commands, the tests, and the non-obvious things that already cost time. Changes for users go in [CHANGELOG.md](CHANGELOG.md); the release notes come from there.
 
 ## Development
 

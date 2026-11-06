@@ -46,6 +46,9 @@ class Mpv extends EventEmitter {
       '--resume-playback=no',
       '--title=' + title + ' - ${media-title}',
       '--no-terminal',
+      // A file dropped on the player would load only for this person, out of sync with
+      // everyone. Videos are changed through the app (which also accepts drops).
+      '--drag-and-drop=no',
       // A volume stage we control separately from the user's own volume (9/0 keys):
       // voice chat lowers it while friends talk ("ducking").
       '--af=@w2gduck:lavfi=[volume=1]',

@@ -1,7 +1,7 @@
 {
   "name": "watch2gether",
   "productName": "Watch2Gether",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Watch local videos together in sync, streamed peer-to-peer over Tailscale.",
   "main": "src/main/main.js",
   "private": true,
@@ -31,7 +31,8 @@
     "productName": "Watch2Gether",
     "files": [
       "src/**/*",
-      "package.json"
+      "package.json",
+      "CHANGELOG.md"
     ],
     "extraResources": [
       {
