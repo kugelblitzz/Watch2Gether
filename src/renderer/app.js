@@ -292,12 +292,41 @@ api.onEnded((reason) => exitLobby(reason));
 
 api.appVersion().then((v) => { $('appVersion').textContent = 'v' + v; });
 
+function fmtRate(bps) {
+  if (!bps) return '';
+  return bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} MB/s` : `${Math.round(bps / 1e3)} KB/s`;
+}
+
 api.onAppUpdate((u) => {
   $('appUpdate').classList.remove('hidden');
+  const bar = $('appUpdateBar');
+  if (u.state === 'failed') {
+    $('appUpdateText').textContent = 'Update download failed. Trying again in a few minutes.';
+    $('appUpdateText').title = u.message || '';
+    bar.classList.add('hidden');
+    $('appUpdateBtn').classList.add('hidden');
+    return;
+  }
   const ready = u.state === 'ready';
-  $('appUpdateText').textContent = ready
-    ? `v${u.version} is ready. It installs when you close the app.`
-    : `Downloading v${u.version}…`;
+  const pct = Math.max(0, Math.min(100, u.percent || 0));
+  let text = `v${u.version} is ready. It installs when you close the app.`;
+  if (!ready) {
+    text = `Downloading v${u.version || ''}…`;
+    if (u.total) {
+      const left = u.bytesPerSecond ? (u.total - u.transferred) / u.bytesPerSecond : null;
+      text = `Updating to v${u.version} · ${Math.floor(pct)}%`
+        + (u.bytesPerSecond ? ` · ${fmtRate(u.bytesPerSecond)}` : '')
+        + (left != null && left > 5 ? ` · ${left >= 90 ? Math.round(left / 60) + ' min' : Math.round(left) + ' s'} left` : '');
+    }
+  }
+  $('appUpdateText').textContent = text;
+  const detail = u.total ? `${text} (${fmtBytes(u.transferred)} of ${fmtBytes(u.total)})` : text;
+  $('appUpdateText').title = detail;
+  bar.title = detail;
+  bar.classList.toggle('hidden', ready);
+  bar.classList.toggle('indeterminate', !ready && !u.total);
+  bar.setAttribute('aria-valuenow', String(Math.round(pct)));
+  bar.firstElementChild.style.setProperty('--pct', `${pct}%`);
   $('appUpdateBtn').classList.toggle('hidden', !ready);
 });
 

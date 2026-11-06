@@ -96,6 +96,27 @@ body {
   animation: drop-in .45s var(--spring) both;
 }
 .app-update button.small { padding: 4px 12px; font-size: 12px; }
+#appUpdateText { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.progress {
+  width: 120px; height: 5px; border-radius: 999px; overflow: hidden; flex: none;
+  background: rgba(255, 255, 255, .12);
+}
+.progress > div {
+  --pct: 0%;
+  height: 100%; width: var(--pct); border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width .4s var(--ease);
+  position: relative; overflow: hidden;
+}
+/* soft sheen sweeping across the filled part */
+.progress > div::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .45), transparent);
+  transform: translateX(-100%); animation: sheen 1.6s ease-in-out infinite;
+}
+.progress.indeterminate > div { width: 35%; animation: indeterminate 1.3s var(--ease) infinite; }
+@keyframes sheen { to { transform: translateX(100%); } }
+@keyframes indeterminate { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
 
 /* ---------- layout ---------- */
 
@@ -356,6 +377,11 @@ details[open] > :not(summary) { animation: fade-down .3s var(--ease) both; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0s !important; transition-duration: .01ms !important; }
+}
+
+/* narrow windows: keep just the update bar; the details are in its tooltip */
+@media (max-width: 1000px) {
+  #appUpdate:has(.progress:not(.hidden)) #appUpdateText { display: none; }
 }
 
 @media (max-width: 860px) {

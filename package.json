@@ -1,13 +1,13 @@
 {
   "name": "watch2gether",
   "productName": "Watch2Gether",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Watch local videos together in sync, streamed peer-to-peer over Tailscale.",
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
     "start": "node scripts/start.js",
-    "test": "node test/server.test.js",
+    "test": "node test/server.test.js && node test/updater.test.js",
     "test:mpv": "node test/real-mpv.test.js",
     "dist": "electron-builder --win"
   },
