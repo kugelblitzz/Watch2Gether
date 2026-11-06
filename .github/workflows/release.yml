@@ -1,0 +1,84 @@
+name: Release installer
+
+# A merged PR is a push to main. Every push builds and tests the installer.
+# A GitHub Release is only published when package.json's version has no tag yet,
+# so bump "version" in your PR to ship it.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Read version
+        id: ver
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "v$v" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$v is already released. Bump the version in package.json to publish a new release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # vendor/mpv is gitignored; fetch the same shinchiro build winget installs.
+      - name: Fetch mpv
+        id: mpv
+        shell: bash
+        run: |
+          gh release download -R shinchiro/mpv-winbuild-cmake \
+            --pattern 'mpv-x86_64-2*.7z' --dir "$RUNNER_TEMP/mpv-dl"
+          archive=$(ls "$RUNNER_TEMP"/mpv-dl/*.7z)
+          echo "name=$(basename "$archive" .7z)" >> "$GITHUB_OUTPUT"
+          7z x "$archive" -o"$RUNNER_TEMP/mpv-x" -y > /dev/null
+          mkdir -p vendor/mpv/mpv
+          for f in mpv.exe mpv.com d3dcompiler_43.dll; do cp "$RUNNER_TEMP/mpv-x/$f" vendor/mpv/; done
+          cp "$RUNNER_TEMP/mpv-x/mpv/fonts.conf" vendor/mpv/mpv/
+          ls -la vendor/mpv vendor/mpv/mpv
+
+      - name: Build installer
+        run: npx electron-builder --win --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Watch2Gether-Setup-${{ steps.ver.outputs.version }}
+          path: dist/Watch2Gether-Setup-*.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        if: steps.ver.outputs.exists == 'false'
+        shell: bash
+        run: |
+          v=${{ steps.ver.outputs.version }}
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          Download **Watch2Gether-Setup-$v.exe** below and run it. See the [README](https://github.com/${{ github.repository }}#setup-everyone) for setup.
+
+          Bundles mpv (\`${{ steps.mpv.outputs.name }}\`, GPL, source at https://mpv.io).
+          EOF
+          gh release create "v$v" dist/Watch2Gether-Setup-$v.exe \
+            --target "${{ github.sha }}" --title "Watch2Gether $v" \
+            --notes-file "$RUNNER_TEMP/notes.md"
