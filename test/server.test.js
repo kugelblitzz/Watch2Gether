@@ -1,0 +1,246 @@
+'use strict';
+
+/**
+ * End-to-end test of the sync logic: real HostServer + two real Sessions talking over
+ * WebSockets, with mpv replaced by a simulated player. Run: npm test
+ */
+
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const http = require('http');
+const { EventEmitter } = require('events');
+
+// ---------- fake mpv ----------
+class FakeMpv extends EventEmitter {
+  constructor() {
+    super();
+    this.props = { pause: true, speed: 1, duration: null, seeking: false, 'paused-for-cache': false, 'demuxer-cache-duration': 0, 'demuxer-cache-idle': true };
+    this.pos = 0;
+    this.lastTick = Date.now();
+    this.observed = new Set();
+    this.loaded = null;
+    FakeMpv.instances.push(this);
+  }
+  _advance() {
+    const now = Date.now();
+    if (this.loaded && !this.props.pause && !this.props['paused-for-cache']) this.pos += ((now - this.lastTick) / 1000) * this.props.speed;
+    this.lastTick = now;
+  }
+  _setProp(name, value) {
+    this._advance();
+    this.props[name] = value;
+    if (this.observed.has(name)) setImmediate(() => this.emit('property', name, value));
+  }
+  async start() {}
+  async command(cmd, ...args) {
+    this._advance();
+    switch (cmd) {
+      case 'get_property':
+        if (args[0] === 'time-pos') return this.loaded ? this.pos : Promise.reject(new Error('property unavailable'));
+        return this.props[args[0]];
+      case 'set_property': this._setProp(args[0], args[1]); return null;
+      case 'observe_property': this.observed.add(args[1]); setImmediate(() => this.emit('property', args[1], this.props[args[1]])); return null;
+      case 'loadfile':
+        this.loaded = args[0];
+        this.pos = 0;
+        setTimeout(() => { this._setProp('duration', 600); this.emit('event', { event: 'file-loaded' }); }, 50);
+        return null;
+      case 'seek': this._seekTo(Number(args[0])); return null;
+      default: return null;
+    }
+  }
+  _seekTo(t) {
+    this.pos = t;
+    this.emit('event', { event: 'seek' });
+    this._setProp('seeking', true);
+    setTimeout(() => { this._setProp('seeking', false); this.emit('event', { event: 'playback-restart' }); }, 30);
+  }
+  // simulate the user acting inside the mpv window
+  userPause(v) { this._setProp('pause', v); }
+  userSeek(t) { this._seekTo(t); }
+  get(p) { return this.command('get_property', p); }
+  set(p, v) { return this.command('set_property', p, v); }
+  observe(p) { return this.command('observe_property', 0, p); }
+  quit() {}
+}
+FakeMpv.instances = [];
+require.cache[require.resolve('../src/main/mpv')] = { exports: { Mpv: FakeMpv } };
+
+const { HostServer } = require('../src/main/server');
+const { Session } = require('../src/main/session');
+const { parseInvite, isAllowedAddress } = require('../src/main/util');
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, ms = 3000, label = 'condition') {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (fn()) return;
+    await wait(20);
+  }
+  throw new Error('Timed out waiting for ' + label);
+}
+
+function get(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    http.get(url, { headers }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    }).on('error', reject);
+  });
+}
+
+let passed = 0;
+async function test(name, fn) {
+  try {
+    await fn();
+    passed++;
+    console.log('  ok  ' + name);
+  } catch (e) {
+    console.error('  FAIL ' + name + '\n       ' + (e.stack || e));
+    process.exitCode = 1;
+  }
+}
+
+(async () => {
+  console.log('util');
+  await test('parseInvite', () => {
+    assert.deepStrictEqual(parseInvite('100.101.1.2:9000/abc123'), { host: '100.101.1.2', port: 9000, code: 'ABC123', baseUrl: 'http://100.101.1.2:9000' });
+    assert.strictEqual(parseInvite('w2g://pc.tail.ts.net/XYZ').port, 8787);
+    assert.throws(() => parseInvite('nonsense'));
+  });
+  await test('address filter', () => {
+    assert(isAllowedAddress('::ffff:100.64.0.1', false));
+    assert(isAllowedAddress('100.127.255.1', false));
+    assert(!isAllowedAddress('100.128.0.1', false));
+    assert(!isAllowedAddress('192.168.1.5', false));
+    assert(isAllowedAddress('192.168.1.5', true));
+    assert(isAllowedAddress('fd7a:115c:a1e0::1', false));
+    assert(!isAllowedAddress('8.8.8.8', true));
+  });
+
+  // a fake 3 MB "video"
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'w2g-test-'));
+  const file = path.join(dir, 'movie.mkv');
+  const data = Buffer.alloc(3 * 1024 * 1024);
+  for (let i = 0; i < data.length; i++) data[i] = i % 251;
+  fs.writeFileSync(file, data);
+
+  const port = 18787;
+  const server = new HostServer({ port });
+  await server.start();
+  server.setMedia(file);
+  const base = `http://127.0.0.1:${port}`;
+
+  console.log('http');
+  await test('rejects wrong room code', async () => {
+    const r = await get(`${base}/media/${server.media.id}?k=WRONG1`);
+    assert.strictEqual(r.status, 403);
+  });
+  await test('serves full file', async () => {
+    const r = await get(`${base}/media/${server.media.id}?k=${server.code}`);
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.length, data.length);
+    assert.strictEqual(r.headers['accept-ranges'], 'bytes');
+  });
+  await test('serves byte ranges', async () => {
+    const r = await get(`${base}/media/${server.media.id}?k=${server.code}`, { Range: 'bytes=1000-1999' });
+    assert.strictEqual(r.status, 206);
+    assert.strictEqual(r.headers['content-range'], `bytes 1000-1999/${data.length}`);
+    assert(r.body.equals(data.subarray(1000, 2000)));
+    const tail = await get(`${base}/media/${server.media.id}?k=${server.code}`, { Range: 'bytes=-10' });
+    assert(tail.body.equals(data.subarray(data.length - 10)));
+    const bad = await get(`${base}/media/${server.media.id}?k=${server.code}`, { Range: `bytes=${data.length}-` });
+    assert.strictEqual(bad.status, 416);
+  });
+
+  console.log('sync');
+  const host = new Session({ baseUrl: base, code: server.code, name: 'Host', hostToken: server.hostToken, mpvPath: 'fake', resolveLocal: () => file });
+  await host.start();
+  const guest = new Session({ baseUrl: base, code: server.code.toLowerCase(), name: 'Guest', mpvPath: 'fake' });
+  await guest.start();
+  const [hm, gm] = FakeMpv.instances;
+
+  await test('guest streams over HTTP, host plays local file', async () => {
+    await until(() => hm.loaded && gm.loaded, 2000, 'both loaded');
+    assert.strictEqual(hm.loaded, file);
+    assert(gm.loaded.startsWith(`${base}/media/${server.media.id}?k=`));
+    await until(() => server.media.duration === 600, 2000, 'duration reported');
+  });
+
+  await test('guest presses play -> both play', async () => {
+    await until(() => !server._isWaiting() || server.paused, 2000);
+    guest.command('play');
+    await until(() => !hm.props.pause && !gm.props.pause, 2000, 'both playing');
+  });
+
+  await test('players stay within 100 ms', async () => {
+    await wait(1200);
+    hm._advance(); gm._advance();
+    assert(Math.abs(hm.pos - gm.pos) < 0.1, `drift ${hm.pos - gm.pos}`);
+    assert(hm.pos > 0.9, 'time advanced: ' + hm.pos);
+  });
+
+  await test('drifted player is pulled back by speed nudging', async () => {
+    gm.pos -= 0.5; // guest falls 500 ms behind
+    await until(() => gm.props.speed > 1, 1500, 'guest speeds up');
+    await until(() => { gm._advance(); hm._advance(); return Math.abs(gm.pos - hm.pos) < 0.05; }, 10000, 'drift corrected');
+    await until(() => gm.props.speed === 1, 3000, 'speed back to 1');
+  });
+
+  await test('large drift triggers a seek', async () => {
+    gm.pos += 10;
+    await until(() => { gm._advance(); hm._advance(); return Math.abs(gm.pos - hm.pos) < 0.2; }, 3000, 'resynced');
+  });
+
+  await test('user pauses in host mpv window -> guest pauses at same frame', async () => {
+    hm.userPause(true);
+    await until(() => server.paused && gm.props.pause, 2000, 'guest paused');
+    await wait(400);
+    hm._advance(); gm._advance();
+    assert(Math.abs(hm.pos - gm.pos) < 0.31, `paused drift ${hm.pos - gm.pos}`);
+  });
+
+  await test('user seeks in guest mpv window -> host follows', async () => {
+    gm.userSeek(123.4);
+    await until(() => Math.abs(hm.pos - 123.4) < 0.3, 2000, 'host at 123.4');
+    assert(server.paused, 'still paused after seek');
+  });
+
+  await test('buffering guest makes the room wait', async () => {
+    host.command('play');
+    await until(() => !hm.props.pause && !gm.props.pause, 2000, 'playing');
+    gm._setProp('paused-for-cache', true);
+    await until(() => server._isWaiting() && hm.props.pause, 2000, 'host waits');
+    assert.deepStrictEqual(server._stateMsg().waitingFor, ['Guest']);
+    gm._setProp('paused-for-cache', false);
+    await until(() => !server._isWaiting() && !hm.props.pause && !gm.props.pause, 3000, 'resumed');
+    await wait(500);
+    hm._advance(); gm._advance();
+    assert(Math.abs(hm.pos - gm.pos) < 0.15, `drift after resume ${hm.pos - gm.pos}`);
+  });
+
+  await test('host changes video -> everyone reloads, paused at 0', async () => {
+    const file2 = path.join(dir, 'other.mp4');
+    fs.writeFileSync(file2, data.subarray(0, 1000));
+    host.resolveLocal = (m) => (m.id === server.media.id ? server.media.path : null);
+    server.setMedia(file2);
+    await until(() => hm.loaded === file2 && gm.loaded.includes(server.media.id), 2000, 'reloaded');
+    await until(() => hm.props.pause && gm.props.pause, 2000, 'paused');
+    assert.strictEqual(server.position, 0);
+  });
+
+  await test('guest leaving does not block the room', async () => {
+    guest.stop();
+    await until(() => server._membersMsg().list.length === 1, 2000, 'guest gone');
+    assert(!server._isWaiting());
+  });
+
+  host.stop();
+  server.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+  console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`);
+  setTimeout(() => process.exit(process.exitCode || 0), 100);
+})();

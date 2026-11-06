@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <title>Watch2Gether</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">▶</span> Watch2Gether</div>
+    <div id="envBadges" class="badges"></div>
+  </header>
+
+  <main>
+    <!-- HOME -->
+    <section id="screen-home">
+      <div id="setup"></div>
+
+      <label class="field name-field">
+        <span>Your name</span>
+        <input id="name" maxlength="32" placeholder="e.g. Alex">
+      </label>
+
+      <div class="cards">
+        <div class="card">
+          <h2>Host a lobby</h2>
+          <p class="muted">Pick a video on this PC. Your friends stream it from you over Tailscale, at full quality with no re-encoding.</p>
+          <div class="file-row">
+            <button id="pickFile">Choose video…</button>
+            <span id="pickedFile" class="muted ellipsis">No file chosen</span>
+          </div>
+          <details>
+            <summary>Advanced</summary>
+            <label class="field inline"><span>Port</span><input id="port" type="number" min="1024" max="65535"></label>
+            <label class="check"><input type="checkbox" id="allowLan"> Also allow friends on my home network (LAN)</label>
+          </details>
+          <button id="hostBtn" class="primary">Start lobby</button>
+        </div>
+
+        <div class="card">
+          <h2>Join a lobby</h2>
+          <p class="muted">Paste the invite your friend sent you.</p>
+          <input id="invite" placeholder="100.x.y.z:8787/ROOMCODE" spellcheck="false">
+          <details>
+            <summary>I already have this video</summary>
+            <div class="file-row">
+              <button id="pickLocal">Choose local copy…</button>
+              <span id="localFile" class="muted ellipsis">None</span>
+            </div>
+            <p class="muted small">If the file size matches the host's, it plays from your disk and nothing is streamed.</p>
+          </details>
+          <button id="joinBtn" class="primary">Join</button>
+        </div>
+      </div>
+      <div id="homeError" class="error hidden"></div>
+    </section>
+
+    <!-- LOBBY -->
+    <section id="screen-lobby" class="hidden">
+      <div class="lobby-head">
+        <div class="now">
+          <div class="muted small">Now playing</div>
+          <h2 id="mediaName" class="ellipsis">-</h2>
+          <div id="mediaMeta" class="muted small"></div>
+        </div>
+        <div class="invite-box">
+          <div class="muted small">Invite friends</div>
+          <code id="inviteCode"></code>
+          <div class="invite-actions">
+            <button id="copyInvite">Copy invite</button>
+          </div>
+          <div id="inviteAlt" class="muted small"></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="playPause" class="big" title="Play / pause (Space)">▶</button>
+        <span id="timeCur" class="time">0:00</span>
+        <input type="range" id="seek" min="0" max="1" value="0" step="0.1">
+        <span id="timeDur" class="time">0:00</span>
+      </div>
+      <div id="statusLine" class="status"></div>
+
+      <div class="grid">
+        <div class="panel">
+          <h3>In the lobby</h3>
+          <ul id="members"></ul>
+          <div id="hostStats" class="stats"></div>
+        </div>
+        <div class="panel chat">
+          <h3>Activity</h3>
+          <div id="log"></div>
+          <form id="chatForm">
+            <input id="chatInput" placeholder="Say something…" maxlength="500" autocomplete="off">
+            <button type="submit">Send</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="changeVideo" class="host-only">Change video…</button>
+        <button id="reopen" class="hidden">Reopen player</button>
+        <span class="spacer"></span>
+        <button id="leave" class="danger">Leave lobby</button>
+      </div>
+      <p class="muted small tip">Tip: you can also control playback from the player window: Space pauses, ←/→ seek, <b>#</b> switches audio track, <b>j</b> switches subtitles, <b>f</b> toggles fullscreen. Everyone stays in sync.</p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
