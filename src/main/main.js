@@ -7,7 +7,7 @@ const { HostServer } = require('./server');
 const { Session } = require('./session');
 const { getTailscaleInfo, findMpv, installMpvWithWinget, lanIp } = require('./env');
 const { parseInvite } = require('./util');
-const { initUpdater, installUpdate } = require('./updater');
+const { initUpdater, installUpdate, checkNow, checkAfterLobby } = require('./updater');
 const { Hotkeys } = require('./hotkeys');
 
 // Echo cancellation must hear everything the app plays (voice is played through Web
@@ -80,6 +80,7 @@ function wireSession(s) {
   s.on('ended', (reason) => {
     leave();
     send('ended', reason);
+    setTimeout(checkAfterLobby, 3000);
   });
 }
 
@@ -234,8 +235,12 @@ function registerIpc() {
   ipcMain.handle('player:reopen', async () => {
     if (session) await session.reopenPlayer();
   });
-  ipcMain.handle('session:leave', () => leave());
+  ipcMain.handle('session:leave', async () => {
+    await leave();
+    setTimeout(checkAfterLobby, 3000);
+  });
   ipcMain.handle('app:version', () => app.getVersion());
+  ipcMain.handle('app:checkUpdates', () => checkNow());
   ipcMain.handle('app:installUpdate', async () => {
     await leave();
     installUpdate();

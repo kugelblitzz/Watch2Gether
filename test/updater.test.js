@@ -22,6 +22,10 @@ fakeUpdater.checkForUpdates = async function () {
     this.emit('error', e);
     throw e;
   }
+  if (this.upToDate) {
+    this.emit('update-not-available', { version: '0.5.1' });
+    return { updateInfo: { version: '0.5.1' } };
+  }
   this.emit('update-available', { version: this.latest });
   return { updateInfo: { version: this.latest } };
 };
@@ -30,7 +34,7 @@ fakeUpdater.quitAndInstall = function () { this.installed = true; };
 const Module = require('module');
 const realLoad = Module._load;
 Module._load = function (req, ...rest) {
-  if (req === 'electron') return { app: { isPackaged: true } };
+  if (req === 'electron') return { app: { isPackaged: true, getVersion: () => '0.5.1' } };
   if (req === 'electron-updater') return { autoUpdater: fakeUpdater };
   return realLoad.call(this, req, ...rest);
 };
@@ -152,7 +156,9 @@ async function test(name, fn) {
     assert(timeouts.some((t) => t.ms === 10 * 60 * 1000), 'retry scheduled');
   });
 
-  await test('scheduled checks wait while in a lobby', async () => {
+  await test('scheduled checks run every 30 minutes and wait while in a lobby', async () => {
+    assert.strictEqual(intervals[0].ms, 30 * 60 * 1000);
+    fakeUpdater.upToDate = true;
     busy = true;
     fireInterval();
     await tick();
@@ -161,6 +167,52 @@ async function test(name, fn) {
     fireInterval();
     await tick();
     assert.strictEqual(fakeUpdater.checks, 2);
+    assert.strictEqual(seen3.length, 0, 'automatic "up to date" results are not shown');
+  });
+
+  await test('leaving a lobby triggers the check that was skipped during the movie', async () => {
+    busy = false;
+    upd3.checkAfterLobby();
+    await tick();
+    assert.strictEqual(fakeUpdater.checks, 3);
+  });
+
+  await test('"check for updates" (click on the version) reports up to date', async () => {
+    busy = true; // works even in a lobby: the user asked
+    upd3.checkNow();
+    await tick();
+    assert.strictEqual(fakeUpdater.checks, 4);
+    assert.deepStrictEqual(seen3.splice(0), [{ state: 'checking' }, { state: 'uptodate', version: '0.5.1' }]);
+    busy = false;
+  });
+
+  await test('"check for updates" while offline says so', async () => {
+    fakeUpdater.failNextCheck = true;
+    upd3.checkNow();
+    await tick();
+    assert.deepStrictEqual(seen3.splice(0).map((u) => u.state), ['checking', 'check-failed']);
+  });
+
+  await test('"check for updates" finds a new version and downloads it', async () => {
+    fakeUpdater.upToDate = false;
+    fakeUpdater.latest = '0.6.0';
+    upd3.checkNow();
+    await tick();
+    assert.deepStrictEqual(seen3.splice(0), [{ state: 'checking' }, { state: 'downloading', version: '0.6.0', percent: 0 }]);
+    fakeUpdater.emit('download-progress', { percent: 40, transferred: 4, total: 10, bytesPerSecond: 1 });
+    seen3.splice(0);
+  });
+
+  await test('clicking again mid-download just shows the progress, no second download', async () => {
+    const before = fakeUpdater.checks;
+    upd3.checkNow();
+    await tick();
+    assert.strictEqual(fakeUpdater.checks, before);
+    assert.deepStrictEqual(seen3.splice(0).map((u) => [u.state, u.percent]), [['downloading', 40]]);
+    fakeUpdater.emit('update-downloaded', { version: '0.6.0' });
+    seen3.splice(0);
+    upd3.checkNow();
+    assert.deepStrictEqual(seen3.splice(0), [{ state: 'ready', version: '0.6.0' }], 'and once ready, shows "Restart to update" again');
   });
 
   console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`);

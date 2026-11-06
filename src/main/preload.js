@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('w2g', {
   openExternal: (url) => ipcRenderer.invoke('open:external', url),
   onUpdate: (cb) => ipcRenderer.on('update', (_e, u) => cb(u)),
   appVersion: () => ipcRenderer.invoke('app:version'),
+  checkUpdates: () => ipcRenderer.invoke('app:checkUpdates'),
   installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
   onAppUpdate: (cb) => ipcRenderer.on('app-update', (_e, u) => cb(u)),
   voiceSend: (msg) => ipcRenderer.invoke('voice:send', msg),

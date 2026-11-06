@@ -53,7 +53,7 @@ Voice goes over the same Tailscale connection as the lobby: the host relays each
 
 ## Updates
 
-The app checks GitHub for a new release when it starts and downloads it in the background (it won't start a download while you're in a lobby). When it's ready, the top bar shows **Restart to update**; otherwise it installs the next time you close the app.
+The app checks GitHub for a new release when it starts, every 30 minutes, and right after you leave a lobby (it never starts a download while you're watching). Click the version number in the top bar to check right away. Downloads happen in the background with a progress bar; when one is ready, the top bar shows **Restart to update**, or it installs the next time you close the app.
 
 ## Bandwidth (the one thing to check)
 

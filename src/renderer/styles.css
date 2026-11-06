@@ -89,7 +89,6 @@ body {
 .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .badge.ok { color: var(--ok); background: rgba(48, 209, 88, .12); }
 .badge.warn { color: var(--warn); background: rgba(255, 159, 10, .12); }
-#appVersion { color: var(--faint); font-variant-numeric: tabular-nums; }
 
 .app-update {
   display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--accent-2);
@@ -555,3 +554,13 @@ button.bind.capturing {
 .pm-host { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--hairline); }
 .pm-host button { align-self: flex-start; padding: 4px 12px; font-size: 12px; }
 #vsNoiseErr { margin: -6px 0 8px; color: var(--warn); }
+
+/* version number in the top bar doubles as "check for updates" */
+.version-btn {
+  -webkit-app-region: no-drag; background: transparent; padding: 3px 8px; border-radius: 8px;
+  color: var(--faint); font-variant-numeric: tabular-nums; font-weight: 500;
+}
+.version-btn:hover { background: var(--fill); color: var(--text); }
+.app-update[data-kind="ok"] { color: var(--ok); }
+.app-update[data-kind="warn"] { color: var(--warn); }
+.app-update[data-kind="checking"] { color: var(--muted); }

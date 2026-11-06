@@ -292,6 +292,20 @@ $('leave').addEventListener('click', async () => {
 api.onEnded((reason) => exitLobby(reason));
 
 api.appVersion().then((v) => { $('appVersion').textContent = 'v' + v; });
+$('appVersion').addEventListener('click', () => api.checkUpdates());
+
+let updateNoteTimer = null;
+/** Short-lived message in the update area (results of a check the user asked for). */
+function updateNote(text, kind) {
+  clearTimeout(updateNoteTimer);
+  $('appUpdate').classList.remove('hidden');
+  $('appUpdate').dataset.kind = kind || '';
+  $('appUpdateText').textContent = text;
+  $('appUpdateText').title = '';
+  $('appUpdateBar').classList.add('hidden');
+  $('appUpdateBtn').classList.add('hidden');
+  if (kind !== 'checking') updateNoteTimer = setTimeout(() => $('appUpdate').classList.add('hidden'), 4000);
+}
 
 function fmtRate(bps) {
   if (!bps) return '';
@@ -300,6 +314,11 @@ function fmtRate(bps) {
 
 api.onAppUpdate((u) => {
   $('appUpdate').classList.remove('hidden');
+  if (u.state === 'checking') return updateNote('Checking for updates…', 'checking');
+  if (u.state === 'uptodate') return updateNote(`You're up to date (v${u.version}).`, 'ok');
+  if (u.state === 'check-failed') return updateNote("Couldn't check for updates. Are you online?", 'warn');
+  clearTimeout(updateNoteTimer);
+  $('appUpdate').dataset.kind = '';
   const bar = $('appUpdateBar');
   if (u.state === 'failed') {
     $('appUpdateText').textContent = 'Update download failed. Trying again in a few minutes.';
