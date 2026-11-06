@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, clipboard, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, shell, screen } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { HostServer } = require('./server');
@@ -33,7 +33,13 @@ let win = null;
 let server = null;
 let session = null;
 let lobbyInfo = null;
-let settings = { name: '', port: DEFAULT_PORT, mpvPath: null, lastInvite: '', allowLan: false };
+let settings = { name: '', port: DEFAULT_PORT, mpvPath: null, lastInvite: '', allowLan: false, playerMode: 'embedded' };
+let videoHost = null; // native window the in-app player draws into
+
+/** Where the player draws: inside the app (embedded) or in mpv's own window (popout). */
+function playerWid() {
+  return settings.playerMode === 'embedded' && videoHost ? videoHost.wid : null;
+}
 
 // ---------- settings ----------
 
@@ -77,6 +83,11 @@ function wireSession(s) {
   s.on('update', (u) => send('update', { ...u, lobby: lobbyInfo }));
   s.on('voice', (msg) => send('voice', msg));
   s.on('voice-audio', (buf) => send('voice-audio', buf));
+  s.on('player-request', (r) => {
+    if (!win) return;
+    if (r === 'fullscreen') win.setFullScreen(!win.isFullScreen());
+    if (r === 'exit-fullscreen' && win.isFullScreen()) win.setFullScreen(false);
+  });
   s.on('ended', (reason) => {
     leave();
     send('ended', reason);
@@ -160,6 +171,7 @@ function registerIpc() {
         port,
       };
       session = new Session({
+        getWid: playerWid,
         baseUrl: `http://127.0.0.1:${port}`,
         code: srv.code,
         name,
@@ -189,6 +201,7 @@ function registerIpc() {
     saveSettings({ name, lastInvite: invite });
     lobbyInfo = { role: 'guest', code: inv.code, invite: `${inv.host}:${inv.port}/${inv.code}`, host: inv.host, port: inv.port };
     session = new Session({
+      getWid: playerWid,
       baseUrl: inv.baseUrl,
       code: inv.code,
       name,
@@ -210,6 +223,21 @@ function registerIpc() {
 
   ipcMain.handle('session:cmd', (_e, { action, position }) => {
     if (session) session.command(action, position);
+  });
+  ipcMain.handle('video:rect', (_e, rect) => {
+    if (videoHost) videoHost.setRect(rect && Number.isFinite(rect.x) ? rect : null);
+  });
+  ipcMain.handle('player:mode', async (_e, mode) => {
+    if (mode !== 'embedded' && mode !== 'popout') return settings.playerMode;
+    if (mode !== settings.playerMode) {
+      saveSettings({ playerMode: mode });
+      if (mode === 'popout' && win && win.isFullScreen()) win.setFullScreen(false);
+      if (session) await session.restartPlayer();
+    }
+    return mode;
+  });
+  ipcMain.handle('window:fullscreen', (_e, on) => {
+    if (win) win.setFullScreen(typeof on === 'boolean' ? on : !win.isFullScreen());
   });
   ipcMain.handle('voice:send', (_e, msg) => {
     if (session) session.voiceSend(msg);
@@ -280,7 +308,39 @@ function createWindow() {
   win.webContents.on('console-message', (_e, level, message, line, source) => {
     if (level >= 2) console.error(`[renderer] ${message} (${source}:${line})`);
   });
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => { win = null; videoHost = null; });
+
+  // In-app player: a native window mpv draws into, kept over the video area.
+  try {
+    const { VideoHost } = require('./videohost');
+    videoHost = new VideoHost(win);
+  } catch (e) {
+    console.error('[videohost] unavailable, using the separate player window', e && e.message);
+  }
+
+  // Fullscreen: the sidebar slides in when the mouse reaches the left edge. The mouse is
+  // over the native video most of the time, which the page can't see, so poll it here.
+  let edgeTimer = null;
+  let lastX = null;
+  win.on('enter-full-screen', () => {
+    send('fullscreen', true);
+    clearInterval(edgeTimer);
+    edgeTimer = setInterval(() => {
+      if (!win) return;
+      const p = screen.getCursorScreenPoint();
+      const b = win.getContentBounds();
+      const x = p.y >= b.y && p.y < b.y + b.height ? p.x - b.x : null;
+      if (x !== lastX) {
+        lastX = x;
+        send('cursor-x', x);
+      }
+    }, 80);
+  });
+  win.on('leave-full-screen', () => {
+    clearInterval(edgeTimer);
+    lastX = null;
+    send('fullscreen', false);
+  });
 }
 
 if (!app.requestSingleInstanceLock()) {

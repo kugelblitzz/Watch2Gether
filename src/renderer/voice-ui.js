@@ -227,7 +227,9 @@ function openMemberMenu(e) {
   const menu = $('memberMenu');
   menu.classList.remove('hidden');
   const r = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(e.clientX, window.innerWidth - r.width - 12)}px`;
+  // stay inside the sidebar: anything over the movie would be hidden behind the video
+  const side = $('sidebar').getBoundingClientRect();
+  menu.style.left = `${Math.max(side.left + 8, Math.min(e.clientX, side.right - r.width - 8))}px`;
   menu.style.top = `${Math.min(e.clientY, window.innerHeight - r.height - 12)}px`;
   e.stopPropagation();
 }

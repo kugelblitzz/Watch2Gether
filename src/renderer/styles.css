@@ -572,3 +572,64 @@ button.bind.capturing {
 
 .pick-now { margin-top: 12px; padding: 7px 16px; }
 .controls button:disabled, #seek:disabled { opacity: .35; cursor: default; }
+
+/* ---------- lobby: Discord-style sidebar + in-app player ---------- */
+
+body.in-lobby main { padding: 0; overflow: hidden; }
+body.in-lobby main > #screen-lobby { max-width: none; height: 100%; }
+.lobby { display: flex; height: 100%; min-height: 0; }
+
+.sidebar {
+  --sidebar-w: 340px;
+  width: var(--sidebar-w); flex: none; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px; padding: 14px;
+  background: rgba(14, 14, 16, .55); border-right: 1px solid var(--hairline);
+  transition: margin-left .32s var(--ease), box-shadow .32s var(--ease);
+}
+.side-card {
+  background: var(--material); border: 1px solid var(--hairline); border-radius: 14px;
+  padding: 14px 16px; box-shadow: 0 1px 1px rgba(0, 0, 0, .25);
+}
+.side-card h3 { margin-bottom: 8px; }
+.side-card.now h2 { font-size: 17px; }
+.now-actions { display: flex; gap: 8px; margin-top: 10px; }
+.now-actions button:empty { display: none; }
+.side-card.invite-box { width: auto; }
+.side-card .invite-row { margin: 4px 0; }
+.side-card .invite-box code, .invite-row code { font-size: 12px; }
+.members-card { display: flex; flex-direction: column; }
+.members-card .voice-bar { margin-top: 12px; padding-top: 0; }
+.side-card.chat { flex: 1 0 220px; display: flex; flex-direction: column; min-height: 220px; }
+.side-card.chat #log { flex: 1; max-height: none; min-height: 120px; }
+.leave-btn { flex: none; align-self: stretch; }
+
+.stage-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px 14px 6px; }
+.stage {
+  flex: 1; min-height: 160px; position: relative; overflow: hidden;
+  background: #000; border-radius: 12px; border: 1px solid var(--hairline);
+  display: grid; place-items: center;
+}
+.stage-ph { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 24px; text-align: center; }
+.stage-ph-text { color: var(--muted); font-size: 15px; max-width: 420px; }
+.stage-ph button { display: inline-flex; align-items: center; gap: 8px; padding: 9px 18px; }
+.stage-col .controls { padding: 10px 14px; gap: 12px; border-radius: 14px; }
+.stage-col .controls .big { width: 44px; height: 44px; }
+.stage-col .status-row { margin: 0 4px 4px; min-height: 22px; }
+
+/* fullscreen: just the movie; the sidebar slides in from the left edge */
+body.fullscreen .topbar { display: none; }
+body.fullscreen .sidebar { margin-left: calc(-1 * var(--sidebar-w)); }
+body.fullscreen.peek .sidebar { margin-left: 0; box-shadow: 12px 0 40px rgba(0, 0, 0, .5); }
+body.fullscreen .stage-col { padding: 0; gap: 0; }
+body.fullscreen .stage { border-radius: 0; border: 0; }
+body.fullscreen .stage-col .controls, body.fullscreen .stage-col .status-row { display: none; }
+
+@media (max-width: 860px) {
+  .sidebar { --sidebar-w: 290px; }
+}
+#popOut.on { color: var(--accent-2); background: rgba(10, 132, 255, .14); }
+.stage-col .controls .icon-btn { flex: none; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.card-head h3 { margin: 0; }
+.side-card #copyInvite { min-width: 0; padding: 4px 12px; font-size: 12px; }
+.side-card .invite-row code { width: 100%; font-size: 12px; }

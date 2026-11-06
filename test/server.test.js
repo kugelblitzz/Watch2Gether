@@ -33,7 +33,7 @@ class FakeMpv extends EventEmitter {
     this.props[name] = value;
     if (this.observed.has(name)) setImmediate(() => this.emit('property', name, value));
   }
-  async start() {}
+  async start(opts) { this.startOpts = opts; }
   async command(cmd, ...args) {
     this._advance();
     switch (cmd) {
@@ -49,6 +49,7 @@ class FakeMpv extends EventEmitter {
         return null;
       case 'seek': this._seekTo(Number(args[0])); return null;
       case 'af-command': (this.afCommands = this.afCommands || []).push(args); return null;
+      case 'keybind': (this.keybinds = this.keybinds || {})[args[0]] = args[1]; return null;
       default: return null;
     }
   }
@@ -64,7 +65,7 @@ class FakeMpv extends EventEmitter {
   get(p) { return this.command('get_property', p); }
   set(p, v) { return this.command('set_property', p, v); }
   observe(p) { return this.command('observe_property', 0, p); }
-  quit() {}
+  quit() { this.quitCalled = true; }
 }
 FakeMpv.instances = [];
 require.cache[require.resolve('../src/main/mpv')] = { exports: { Mpv: FakeMpv } };
@@ -470,6 +471,41 @@ async function test(name, fn) {
     await Promise.all([g2.reopenPlayer(), g2.reopenPlayer()]); // already open: no-op, never two players
     assert.strictEqual(FakeMpv.instances.length, before + 3);
     h2.stop(); g2.stop(); es.stop();
+  });
+
+  await test('in-app player: mpv draws into the app window; f / double-click ask for app fullscreen; pop out restarts it', async () => {
+    const xp = port + 6;
+    const xs = new HostServer({ port: xp });
+    await xs.start();
+    xs.setMedia(file);
+    let wid = '123456';
+    const before = FakeMpv.instances.length;
+    const g3 = new Session({ baseUrl: `http://127.0.0.1:${xp}`, code: xs.code, name: 'G3', mpvPath: 'fake', getWid: () => wid });
+    const requests = [];
+    g3.on('player-request', (r) => requests.push(r));
+    await g3.start();
+    await until(() => FakeMpv.instances.length === before + 1 && FakeMpv.instances[before].loaded, 2000, 'player open');
+    const p1 = FakeMpv.instances[before];
+    assert.deepStrictEqual(p1.startOpts.extraArgs, ['--wid=123456'], 'drawn into the app window');
+    assert.strictEqual(p1.keybinds.f, 'script-message w2g-fullscreen');
+    assert.strictEqual(p1.keybinds.MBTN_LEFT_DBL, 'script-message w2g-fullscreen');
+    assert.strictEqual(p1.keybinds.ESC, 'script-message w2g-exit-fullscreen');
+    p1.emit('event', { event: 'client-message', args: ['w2g-fullscreen'] });
+    p1.emit('event', { event: 'client-message', args: ['something-else'] });
+    assert.deepStrictEqual(requests, ['fullscreen']);
+
+    wid = null; // pop out
+    await g3.restartPlayer();
+    assert(p1.quitCalled, 'old player closed');
+    const p2 = FakeMpv.instances[before + 1];
+    assert(p2, 'new player started');
+    assert.deepStrictEqual(p2.startOpts.extraArgs, [], 'its own window');
+    assert.strictEqual(p2.keybinds, undefined, 'mpv keeps its own f / double-click in its own window');
+    await until(() => p2.loaded && p2.loaded.includes(xs.media.id), 2000, 'same video reloaded');
+    p1.emit('exit'); // the old player's exit arrives late: must not count as "player closed"
+    await wait(100);
+    assert.strictEqual(g3.playerOpen, true);
+    g3.stop(); xs.stop();
   });
 
   await test('host changes video -> everyone reloads, paused at 0', async () => {

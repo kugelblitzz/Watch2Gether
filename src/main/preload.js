@@ -32,6 +32,11 @@ contextBridge.exposeInMainWorld('w2g', {
   hotkeyCancel: () => ipcRenderer.invoke('hotkeys:cancel'),
   onHotkey: (cb) => ipcRenderer.on('hotkey', (_e, h) => cb(h)),
   duck: (level) => ipcRenderer.invoke('player:duck', level),
+  videoRect: (rect) => ipcRenderer.invoke('video:rect', rect),
+  setPlayerMode: (mode) => ipcRenderer.invoke('player:mode', mode),
+  fullscreen: (on) => ipcRenderer.invoke('window:fullscreen', on),
+  onFullscreen: (cb) => ipcRenderer.on('fullscreen', (_e, on) => cb(on)),
+  onCursorX: (cb) => ipcRenderer.on('cursor-x', (_e, x) => cb(x)),
   onVoiceAudio: (cb) => ipcRenderer.on('voice-audio', (_e, bytes) => cb(bytes)),
   onEnded: (cb) => ipcRenderer.on('ended', (_e, reason) => cb(reason)),
 });

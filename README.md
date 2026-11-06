@@ -23,13 +23,18 @@ Watch a video file from one person's PC together with friends, in sync. Anyone i
 
 **Friends:** enter your name → paste the invite → **Join**. If you already have the file, open *"I already have this video"* first and pick it.
 
-The video plays in an mpv window, and the Watch2Gether window shows the lobby, the status of each person and chat. You can control playback from either window:
+Everything is in one window, Discord-style: the lobby, members, voice and chat on the left, and the movie on the right with the play bar under it.
+
+- **Fullscreen** (button, **F**, or double-click the video): just the movie. Move the mouse to the left edge and the sidebar slides in; move away and it hides again. **Esc** leaves fullscreen.
+- **Pop out** (button next to fullscreen): the movie moves into its own window (mpv's own fullscreen with **f** works there). **Bring it back** puts it back in the app.
+
+You can control playback from the app or from the video itself:
 
 | Key (in the player window) | Action |
 |---|---|
 | Space | Play / pause for everyone |
 | ← / → | Seek 5 s for everyone (↑/↓ seeks 1 min) |
-| f | Fullscreen (just you) |
+| f / double-click | Fullscreen (just you) |
 | # | Switch audio track (just you) |
 | j | Switch subtitles (just you) |
 | 9 / 0 | Volume (just you) |
@@ -84,6 +89,8 @@ npm start        # run the app
 npm test         # sync engine tests (real server + sessions, simulated player)
 npm run test:mpv -- <video>   # same, with two real mpv players (opens windows)
 npm run test:voice            # voice chat end-to-end in hidden, silent windows
+npm run test:embed            # in-app player: mpv inside the window (visible for a few seconds)
+npm run test:app -- <video>   # whole app with real mpv: layouts, fullscreen, pop out (use a video with no audio)
 npm run dist     # build dist/Watch2Gether-Setup-<version>.exe
 ```
 

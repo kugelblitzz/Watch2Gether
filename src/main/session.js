@@ -30,6 +30,8 @@ class Session extends EventEmitter {
     this.isHost = !!opts.hostToken;
     this.mpvPath = opts.mpvPath;
     this.resolveLocal = opts.resolveLocal || (() => null);
+    // Native window to draw into (mpv --wid) for the in-app player, or null for mpv's own window.
+    this.getWid = opts.getWid || (() => null);
 
     this.ws = null;
     this.closed = false;
@@ -90,6 +92,19 @@ class Session extends EventEmitter {
     clearInterval(this.duckTimer);
     try { if (this.ws) this.ws.close(); } catch { /* ignore */ }
     if (this.mpv) this.mpv.quit();
+  }
+
+  /**
+   * Switch between the in-app player and mpv's own window: restart the player in the
+   * new mode. The sync loop puts it back on the room's position within a second.
+   */
+  async restartPlayer() {
+    if (!this.playerOpen || !this.mpv) return;
+    const old = this.mpv;
+    this.playerOpen = false;
+    this.loadedMediaId = null;
+    old.quit(); // its 'exit' is ignored: this.mpv points at the new player by then
+    await this.reopenPlayer();
   }
 
   /** Open the player and load the current video. Concurrent calls share one attempt. */
@@ -380,7 +395,15 @@ class Session extends EventEmitter {
         this._emitUpdate(true);
       }
     });
-    await mpv.start({ title: 'Watch2Gether' });
+    const wid = this.getWid();
+    this.embedded = !!wid;
+    await mpv.start({ title: 'Watch2Gether', extraArgs: wid ? ['--wid=' + wid] : [] });
+    if (wid) {
+      // Inside the app, fullscreen is the app's: f / double-click toggle it, Esc leaves it.
+      for (const [key, msg] of [['f', 'w2g-fullscreen'], ['MBTN_LEFT_DBL', 'w2g-fullscreen'], ['ESC', 'w2g-exit-fullscreen']]) {
+        await mpv.command('keybind', key, 'script-message ' + msg).catch(() => {});
+      }
+    }
     this.playerOpen = true;
     this.ps = { paused: true, timePos: null, duration: null, seeking: false, pausedForCache: false, cacheDur: 0, cacheIdle: false };
     this.speed = 1;
@@ -476,6 +499,11 @@ class Session extends EventEmitter {
         this.ourSeeks = 0;
         if (this.loading || now - this.loadedAt < 1500) return;
         this.pendingUserSeek = true; // user seeked inside mpv; report once it settles
+        break;
+      }
+      case 'client-message': {
+        const name = e.args && e.args[0];
+        if (typeof name === 'string' && name.startsWith('w2g-')) this.emit('player-request', name.slice(4));
         break;
       }
       case 'playback-restart':

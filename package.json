@@ -1,7 +1,7 @@
 {
   "name": "watch2gether",
   "productName": "Watch2Gether",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Watch local videos together in sync, streamed peer-to-peer over Tailscale.",
   "main": "src/main/main.js",
   "private": true,
@@ -11,11 +11,14 @@
     "test:mpv": "node test/real-mpv.test.js",
     "dist": "electron-builder --win",
     "test:voice": "node test/voice-e2e/run.js",
-    "test:hotkeys-real": "node test/hotkeys-real/run.js"
+    "test:hotkeys-real": "node test/hotkeys-real/run.js",
+    "test:embed": "node test/embed/run.js",
+    "test:app": "node test/app-e2e/run.js"
   },
   "dependencies": {
     "@sapphi-red/web-noise-suppressor": "^0.4.1",
     "electron-updater": "^6.8.11",
+    "koffi": "^3.3.7",
     "uiohook-napi": "^1.5.5",
     "ws": "^8.18.0"
   },

@@ -82,101 +82,113 @@
       <div id="homeError" class="error hidden"></div>
     </section>
 
-    <!-- LOBBY -->
+    <!-- LOBBY: Discord-style. Sidebar on the left, the movie on the right. -->
     <section id="screen-lobby" class="hidden">
-      <div class="lobby-head">
-        <div class="now">
-          <h3>Now playing</h3>
-          <h2 id="mediaName" class="ellipsis">-</h2>
-          <div id="mediaMeta" class="muted small"></div>
-          <button id="pickNow" class="primary small pick-now hidden">Choose video…</button>
-        </div>
-        <div class="invite-box">
-          <h3>Invite friends</h3>
-          <div class="invite-row">
-            <code id="inviteCode"></code>
-            <button id="copyInvite">Copy</button>
-          </div>
-          <div id="inviteAlt" class="muted small"></div>
-        </div>
-      </div>
-
-      <div class="controls">
-        <button id="playPause" class="big" title="Play / pause (Space)" aria-label="Play or pause">
-          <svg class="i-play" viewBox="0 0 10 12" fill="currentColor"><path d="M0 1.1v9.8a1 1 0 0 0 1.5.86l8.2-4.9a1 1 0 0 0 0-1.72L1.5.24A1 1 0 0 0 0 1.1z"/></svg>
-          <svg class="i-pause" viewBox="0 0 12 12" fill="currentColor"><rect x="1" y="0" width="3.6" height="12" rx="1.2"/><rect x="7.4" y="0" width="3.6" height="12" rx="1.2"/></svg>
-        </button>
-        <span id="timeCur" class="time">0:00</span>
-        <input type="range" id="seek" min="0" max="1" value="0" step="0.1" aria-label="Seek">
-        <span id="timeDur" class="time">0:00</span>
-      </div>
-      <div class="status-row">
-        <div id="statusLine" class="status"></div>
-        <!-- shown right under the controls when the player window is closed, so it's easy to find -->
-        <button id="reopen" class="primary small reopen hidden">
-          <svg class="vi" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2.5"/><path d="M10 8.5v5l4.5-2.5z" fill="currentColor"/></svg>
-          Open player window
-        </button>
-      </div>
-
-      <div class="grid">
-        <div class="panel">
-          <h3>In the lobby</h3>
-          <ul id="members"></ul>
-          <div id="hostStats" class="stats"></div>
-
-          <div id="voiceBar" class="voice-bar">
-            <div id="voiceJoinRow" class="voice-join-row">
-              <button id="voiceJoin" class="voice-join">
-                <svg class="vi" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>
-                Join voice
-              </button>
-              <button id="voiceSettingsBtn2" class="icon-btn" title="Voice &amp; audio settings" aria-label="Voice settings">
-                <svg class="vi" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
-              </button>
+      <div class="lobby">
+        <aside id="sidebar" class="sidebar">
+          <div class="side-card now">
+            <h3>Now playing</h3>
+            <h2 id="mediaName" class="ellipsis">-</h2>
+            <div id="mediaMeta" class="muted small"></div>
+            <div class="now-actions">
+              <button id="pickNow" class="primary small hidden">Choose video…</button>
+              <button id="changeVideo" class="small host-only">Change video…</button>
             </div>
-            <div id="voiceControls" class="voice-controls hidden">
-              <div id="voiceStatus" class="voice-status">
-                <span class="vs-dot"></span>
-                <div class="vs-text"><b>Voice connected</b><span id="voiceSub" class="muted small"></span></div>
-              </div>
-              <div class="voice-buttons">
-                <button id="voiceMute" class="icon-btn" title="Mute (Ctrl+Shift+M)" aria-label="Mute">
-                  <svg class="vi" viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/><path class="strike" d="M4 4l16 16"/></svg>
+          </div>
+
+          <div class="side-card invite-box">
+            <div class="card-head">
+              <h3>Invite friends</h3>
+              <button id="copyInvite" class="small">Copy</button>
+            </div>
+            <div class="invite-row">
+              <code id="inviteCode"></code>
+            </div>
+            <div id="inviteAlt" class="muted small"></div>
+          </div>
+
+          <div class="side-card members-card">
+            <h3>In the lobby</h3>
+            <ul id="members"></ul>
+            <div id="hostStats" class="stats"></div>
+            <div id="voiceBar" class="voice-bar">
+              <div id="voiceJoinRow" class="voice-join-row">
+                <button id="voiceJoin" class="voice-join">
+                  <svg class="vi" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>
+                  Join voice
                 </button>
-                <button id="voiceDeafen" class="icon-btn" title="Deafen (Ctrl+Shift+D)" aria-label="Deafen">
-                  <svg class="vi" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/><path class="strike" d="M4 4l16 16"/></svg>
-                </button>
-                <button id="voiceSettingsBtn" class="icon-btn" title="Voice &amp; audio settings" aria-label="Voice settings">
+                <button id="voiceSettingsBtn2" class="icon-btn" title="Voice &amp; audio settings" aria-label="Voice settings">
                   <svg class="vi" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
                 </button>
-                <button id="voiceLeave" class="icon-btn hangup" title="Leave voice" aria-label="Leave voice">
-                  <svg class="vi" viewBox="0 0 24 24"><path d="M3.5 14.5c4.7-4.7 12.3-4.7 17 0l-2 2.5-3.5-1.4v-2.4a9 9 0 0 0-6 0v2.4L5.5 17z"/></svg>
-                </button>
+              </div>
+              <div id="voiceControls" class="voice-controls hidden">
+                <div id="voiceStatus" class="voice-status">
+                  <span class="vs-dot"></span>
+                  <div class="vs-text"><b>Voice connected</b><span id="voiceSub" class="muted small"></span></div>
+                </div>
+                <div class="voice-buttons">
+                  <button id="voiceMute" class="icon-btn" title="Mute (Ctrl+Shift+M)" aria-label="Mute">
+                    <svg class="vi" viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/><path class="strike" d="M4 4l16 16"/></svg>
+                  </button>
+                  <button id="voiceDeafen" class="icon-btn" title="Deafen (Ctrl+Shift+D)" aria-label="Deafen">
+                    <svg class="vi" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/><path class="strike" d="M4 4l16 16"/></svg>
+                  </button>
+                  <button id="voiceSettingsBtn" class="icon-btn" title="Voice &amp; audio settings" aria-label="Voice settings">
+                    <svg class="vi" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+                  </button>
+                  <button id="voiceLeave" class="icon-btn hangup" title="Leave voice" aria-label="Leave voice">
+                    <svg class="vi" viewBox="0 0 24 24"><path d="M3.5 14.5c4.7-4.7 12.3-4.7 17 0l-2 2.5-3.5-1.4v-2.4a9 9 0 0 0-6 0v2.4L5.5 17z"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div id="voiceTip" class="voice-tip hidden">
+                <span id="voiceTipText">Using speakers? Friends may hear the movie through your mic. Headphones work best.</span>
+                <button id="voiceTipClose" class="icon-btn small" aria-label="Dismiss">×</button>
               </div>
             </div>
-            <div id="voiceTip" class="voice-tip hidden">
-              <span id="voiceTipText">Using speakers? Friends may hear the movie through your mic. Headphones work best.</span>
-              <button id="voiceTipClose" class="icon-btn small" aria-label="Dismiss">×</button>
+          </div>
+
+          <div class="side-card chat">
+            <h3>Activity</h3>
+            <div id="log"></div>
+            <form id="chatForm">
+              <input id="chatInput" placeholder="Say something…" maxlength="500" autocomplete="off">
+              <button type="submit" class="primary small">Send</button>
+            </form>
+          </div>
+
+          <button id="leave" class="danger leave-btn">Leave lobby</button>
+        </aside>
+
+        <div class="stage-col">
+          <!-- The in-app player is a native window placed exactly over #stage. -->
+          <div id="stage" class="stage">
+            <div id="stagePh" class="stage-ph">
+              <div id="stagePhText" class="stage-ph-text"></div>
+              <button id="reopen" class="primary reopen hidden">
+                <svg class="vi" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2.5"/><path d="M10 8.5v5l4.5-2.5z" fill="currentColor"/></svg>
+                Open player
+              </button>
+              <button id="bringBack" class="primary hidden">Bring it back into this window</button>
+              <button id="pickNow2" class="primary hidden">Choose video…</button>
             </div>
           </div>
-        </div>
-        <div class="panel chat">
-          <h3>Activity</h3>
-          <div id="log"></div>
-          <form id="chatForm">
-            <input id="chatInput" placeholder="Say something…" maxlength="500" autocomplete="off">
-            <button type="submit" class="primary">Send</button>
-          </form>
+          <div class="controls">
+            <button id="playPause" class="big" title="Play / pause (Space)" aria-label="Play or pause">
+              <svg class="i-play" viewBox="0 0 10 12" fill="currentColor"><path d="M0 1.1v9.8a1 1 0 0 0 1.5.86l8.2-4.9a1 1 0 0 0 0-1.72L1.5.24A1 1 0 0 0 0 1.1z"/></svg>
+              <svg class="i-pause" viewBox="0 0 12 12" fill="currentColor"><rect x="1" y="0" width="3.6" height="12" rx="1.2"/><rect x="7.4" y="0" width="3.6" height="12" rx="1.2"/></svg>
+            </button>
+            <span id="timeCur" class="time">0:00</span>
+            <input type="range" id="seek" min="0" max="1" value="0" step="0.1" aria-label="Seek">
+            <span id="timeDur" class="time">0:00</span>
+            <button id="popOut" class="icon-btn" title="Pop out into its own window" aria-label="Pop out"><svg class="vi" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg></button>
+            <button id="fullscreenBtn" class="icon-btn" title="Fullscreen (F, or double-click the video)" aria-label="Fullscreen"><svg class="vi" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          </div>
+          <div class="status-row">
+            <div id="statusLine" class="status"></div>
+          </div>
         </div>
       </div>
-
-      <div class="actions">
-        <button id="changeVideo" class="host-only">Change video…</button>
-        <span class="spacer"></span>
-        <button id="leave" class="danger">Leave lobby</button>
-      </div>
-      <p class="small tip">Tip: you can also control playback from the player window: Space pauses, ←/→ seek, <b>#</b> switches audio track, <b>j</b> switches subtitles, <b>f</b> toggles fullscreen. Everyone stays in sync.</p>
     </section>
   </main>
 

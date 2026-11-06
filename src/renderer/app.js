@@ -196,7 +196,9 @@ function showScreen(id) {
 // ---------- lobby ----------
 
 function enterLobby() {
+  document.body.classList.add('in-lobby');
   showScreen('screen-lobby');
+  setTimeout(syncStage, 700); // after the screen transition settles
   renderedLogCount = 0;
   $('log').replaceChildren();
   const isHost = lobby.role === 'host';
@@ -212,6 +214,9 @@ function enterLobby() {
 function exitLobby(reason) {
   lobby = null;
   last = null;
+  api.videoRect(null);
+  if (document.body.classList.contains('fullscreen')) api.fullscreen(false);
+  document.body.classList.remove('in-lobby');
   voiceUi.onExitLobby();
   showScreen('screen-home');
   if (reason) showError(reason);
@@ -276,6 +281,111 @@ async function chooseVideo() {
 }
 $('changeVideo').addEventListener('click', chooseVideo);
 $('pickNow').addEventListener('click', chooseVideo);
+$('pickNow2').addEventListener('click', chooseVideo);
+
+// ---------- in-app player (a native window kept over #stage) ----------
+
+let playerMode = 'embedded'; // or 'popout' (mpv's own window); saved in settings
+let lastRect = null;
+let stageRaf = null;
+
+/** Is the in-app video supposed to be visible right now? */
+function videoShown() {
+  const u = last;
+  return !!(lobby && u && u.room && u.room.media && u.player && u.player.open
+    && playerMode === 'embedded'
+    && !$('screen-lobby').classList.contains('hidden')
+    && $('voiceSettings').classList.contains('hidden')); // a native window would cover the dialog
+}
+
+/** Put the native video window exactly over #stage (or hide it). */
+function syncStage() {
+  cancelAnimationFrame(stageRaf);
+  stageRaf = requestAnimationFrame(() => {
+    let rect = null;
+    if (videoShown()) {
+      const r = $('stage').getBoundingClientRect();
+      rect = { x: r.left + 1, y: r.top + 1, width: r.width - 2, height: r.height - 2 }; // inside the border
+    }
+    const key = JSON.stringify(rect);
+    if (key === lastRect) return;
+    lastRect = key;
+    api.videoRect(rect);
+  });
+}
+new ResizeObserver(syncStage).observe($('stage'));
+window.addEventListener('resize', syncStage);
+$('sidebar').addEventListener('transitionend', syncStage);
+// the voice settings dialog opens and closes in voice-ui.js; hide the video while it's up
+new MutationObserver(syncStage).observe($('voiceSettings'), { attributes: true, attributeFilter: ['class'] });
+
+async function setPlayerMode(mode) {
+  playerMode = mode;
+  renderPlayerChrome();
+  syncStage();
+  try {
+    playerMode = await api.setPlayerMode(mode);
+  } catch (e) {
+    alert('Could not switch the player: ' + cleanError(e));
+  }
+  renderPlayerChrome();
+  syncStage();
+}
+$('popOut').addEventListener('click', () => setPlayerMode(playerMode === 'embedded' ? 'popout' : 'embedded'));
+$('bringBack').addEventListener('click', () => setPlayerMode('embedded'));
+$('fullscreenBtn').addEventListener('click', () => api.fullscreen());
+
+/** Buttons and the message on the stage behind the video. */
+function renderPlayerChrome() {
+  const u = last;
+  const media = u && u.room && u.room.media;
+  const open = !!(u && u.player && u.player.open);
+  const isHost = !!(lobby && lobby.role === 'host');
+  const embedded = playerMode === 'embedded';
+  let text = '';
+  if (!media) text = isHost ? 'No video yet. Talk it over, then choose one.' : 'Waiting for the host to choose a video.';
+  else if (!open) text = 'Your player is closed.';
+  else if (!embedded) text = 'Playing in a separate window.';
+  else text = 'Loading…';
+  $('stagePhText').textContent = text;
+  $('pickNow2').classList.toggle('hidden', !!media || !isHost);
+  $('bringBack').classList.toggle('hidden', !media || !open || embedded);
+  $('popOut').title = embedded ? 'Pop out into its own window' : 'Bring the player back into this window';
+  $('popOut').classList.toggle('on', !embedded);
+  $('fullscreenBtn').classList.toggle('hidden', !embedded);
+}
+
+// Fullscreen: only the movie; the sidebar slides in when the mouse reaches the left edge.
+let peekTimer = null;
+function setPeek(on) {
+  clearTimeout(peekTimer);
+  document.body.classList.toggle('peek', on);
+}
+api.onFullscreen((on) => {
+  document.body.classList.toggle('fullscreen', on);
+  setPeek(false);
+  syncStage();
+});
+api.onCursorX((x) => {
+  if (!document.body.classList.contains('fullscreen')) return;
+  const peeking = document.body.classList.contains('peek');
+  const width = $('sidebar').offsetWidth;
+  if (x != null && x <= 6) setPeek(true);
+  else if (peeking && (x == null || x > width + 40)) {
+    if (!peekTimer) peekTimer = setTimeout(() => { peekTimer = null; setPeek(false); }, 700);
+  } else if (peeking) {
+    clearTimeout(peekTimer);
+    peekTimer = null;
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (!lobby || isTyping(e.target) || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.key === 'f' || e.key === 'F') {
+    if (playerMode === 'embedded') api.fullscreen();
+  } else if (e.key === 'Escape' && document.body.classList.contains('fullscreen')) {
+    api.fullscreen(false);
+  }
+});
 
 $('reopen').addEventListener('click', async () => {
   try {
@@ -423,6 +533,8 @@ function render(u) {
   }
   status.textContent = text;
   $('reopen').classList.toggle('hidden', u.player.open || !media);
+  renderPlayerChrome();
+  syncStage();
 
   renderMembers(u, media, dur);
   renderLog(u.log);
@@ -496,6 +608,7 @@ function renderLog(log) {
 
 (async function boot() {
   settings = await api.getSettings();
+  playerMode = settings.playerMode === 'popout' ? 'popout' : 'embedded';
   $('name').value = settings.name || '';
   $('port').value = settings.port || 8787;
   $('allowLan').checked = !!settings.allowLan;
