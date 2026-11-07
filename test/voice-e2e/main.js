@@ -169,6 +169,16 @@ app.whenReady().then(async () => {
       await until(async () => (await a.js(`!!${a.peer(b)}`)) && (await b.js(`!!${b.peer(a)}`)), 5000, 'peers');
     });
 
+    await test('a sound plays when someone else joins or leaves voice', async () => {
+      await a.js('cues.length = 0');
+      await c.js('engine.join()');
+      await until(() => a.js(`!!${a.peer(c)}`), 3000, 'Cara in voice');
+      await c.js('engine.leave(); 0');
+      await until(() => a.js(`!${a.peer(c)}`), 3000, 'Cara gone');
+      const cues = await a.js('cues.slice()');
+      assert.deepStrictEqual(cues.filter((k) => k.startsWith('peer')), ['peerJoin', 'peerLeave']);
+    });
+
     await test('audio flows both ways', async () => {
       const ab = await heard(b, a, 3000);
       const ba = await heard(a, b, 3000);

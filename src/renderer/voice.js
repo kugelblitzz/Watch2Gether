@@ -18,6 +18,8 @@
 
 const VOICE_DEFAULTS = {
   inputDeviceId: 'default',
+  inputDeviceLabel: '',    // name of the chosen device, to find it again if its id changes
+  outputDeviceLabel: '',
   outputDeviceId: 'default',
   inputVolume: 1,          // 0..2
   outputVolume: 1,         // 0..2
@@ -86,6 +88,20 @@ function loadVoiceSettings() {
   return { ...VOICE_DEFAULTS, ...saved, binds: { ...VOICE_DEFAULTS.binds, ...binds } };
 }
 
+/**
+ * A device name without the parts Windows changes when a USB / wireless device is
+ * re-plugged or re-paired: "Default - " / "Communications - " prefixes, the instance
+ * number in "(4- GSP 370)", and a trailing "(1395:009a)" vendor:product id.
+ */
+function deviceKey(label) {
+  return String(label || '')
+    .replace(/^(Default|Communications) - /, '')
+    .replace(/\(\d+- /g, '(')
+    .replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '')
+    .trim()
+    .toLowerCase();
+}
+
 function levelDb(analyser, buf) {
   const win = buf.subarray(0, Math.min(buf.length, analyser.fftSize)); // exactly the analyser's window
   analyser.getFloatTimeDomainData(win);
@@ -131,6 +147,11 @@ class VoiceEngine {
     this.seq = 0;
     this.ts = 0;
     this.wasmCache = {};
+    this.missing = { input: false, output: false }; // chosen device not connected right now
+    // A device plugged in / out: switch back to the chosen one when it reappears.
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', () => this._onDeviceChange());
+    }
   }
 
   // ---------- public API ----------
@@ -284,9 +305,11 @@ class VoiceEngine {
         for (const id of msg.peers || []) this._peer(id);
         break;
       case 'voice-peer-joined':
+        if (!this.peers.has(msg.id)) this._cue('peerJoin');
         this._peer(msg.id);
         break;
       case 'voice-peer-left':
+        if (this.peers.has(msg.id)) this._cue('peerLeave');
         this._closePeer(msg.id);
         break;
       case 'voice-kicked':
@@ -354,12 +377,46 @@ class VoiceEngine {
     if (ctx.state !== 'running') await ctx.resume().catch(() => {});
   }
 
+  /**
+   * The device id to use now for the chosen input / output: the saved id if that device is
+   * here, else the same device found by name (its id changed, e.g. a re-plugged USB headset;
+   * the new id is saved), else null (not connected: use the default for now, but keep the
+   * choice so it's picked up again once it's back). 'default' means the Windows default.
+   */
+  async _resolveDevice(kind) {
+    const s = this.settings;
+    const id = s[kind + 'DeviceId'];
+    if (!id || id === 'default') return 'default';
+    const want = kind === 'input' ? 'audioinput' : 'audiooutput';
+    const list = (await navigator.mediaDevices.enumerateDevices().catch(() => [])).filter((d) => d.kind === want);
+    const here = list.find((d) => d.deviceId === id);
+    if (here) {
+      this.missing[kind] = false;
+      if (!s[kind + 'DeviceLabel'] && here.label) { // chosen before names were saved: save it now
+        s[kind + 'DeviceLabel'] = here.label;
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+      }
+      return id;
+    }
+    const key = deviceKey(s[kind + 'DeviceLabel']);
+    const same = key && list.find((d) => d.deviceId !== 'default' && d.deviceId !== 'communications' && deviceKey(d.label) === key);
+    if (same) {
+      s[kind + 'DeviceId'] = same.deviceId;
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+      this.missing[kind] = false;
+      return same.deviceId;
+    }
+    this.missing[kind] = true;
+    return null;
+  }
+
   async _startMic() {
     const s = this.settings;
     this._disconnectMic();
+    const inputId = await this._resolveDevice('input');
     const constraints = {
       audio: {
-        deviceId: s.inputDeviceId && s.inputDeviceId !== 'default' ? { exact: s.inputDeviceId } : undefined,
+        deviceId: inputId && inputId !== 'default' ? { exact: inputId } : undefined,
         echoCancellation: s.echoCancellation,
         noiseSuppression: s.noiseCancel === 'standard',
         autoGainControl: s.autoGainControl,
@@ -381,6 +438,9 @@ class VoiceEngine {
       }
     }
     this.micError = null;
+    // the mic in use was unplugged: carry on with whatever is available (default)
+    const track = this.mic.getAudioTracks()[0];
+    if (track) track.addEventListener('ended', () => { if (this.mic && this.mic.getAudioTracks()[0] === track) this._startMic().then(() => this._changed()); });
     this.micSrc = this.ctx.createMediaStreamSource(this.mic);
     this.rawAnalyser = this.ctx.createAnalyser();
     this.rawAnalyser.fftSize = 1024;
@@ -438,6 +498,16 @@ class VoiceEngine {
     if (this.mic) this.mic.getAudioTracks().forEach((t) => t.applyConstraints({ noiseSuppression: true }).catch(() => {}));
   }
 
+  async _onDeviceChange() {
+    try {
+      if (this.mic && this.missing.input) await this._startMic();
+      if (this.ctx && this.missing.output) await this._applySink();
+    } catch (e) {
+      console.error('[voice] device change', e);
+    }
+    this._changed();
+  }
+
   _disconnectMic() {
     if (this.mic) this.mic.getTracks().forEach((t) => t.stop());
     if (this.micSrc) this.micSrc.disconnect();
@@ -492,9 +562,11 @@ class VoiceEngine {
 
   async _applySink() {
     if (!this.ctx || typeof this.ctx.setSinkId !== 'function') return;
-    const id = this.settings.outputDeviceId;
+    const id = await this._resolveDevice('output');
+    // Never overwrite the user's choice here: if the device is missing or busy, play on the
+    // default for now and keep the choice (this used to reset it to "default" for good).
     await this.ctx.setSinkId(id && id !== 'default' ? id : '').catch(() => {
-      this.settings.outputDeviceId = 'default';
+      this.missing.output = true;
       return this.ctx.setSinkId('').catch(() => {});
     });
   }
@@ -631,6 +703,8 @@ class VoiceEngine {
     if (!this.settings.soundCues || !this.ctx) return;
     const notes = {
       join: [523.25, 783.99],
+      peerJoin: [659.25, 987.77], // someone else joined voice (higher than your own join)
+      peerLeave: [987.77, 659.25],
       leave: [783.99, 523.25],
       mute: [440, 330],
       unmute: [330, 440],

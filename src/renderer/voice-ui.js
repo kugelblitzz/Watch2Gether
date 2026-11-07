@@ -291,8 +291,8 @@ async function openVoiceSettings() {
       ({ inputs, outputs } = await voice.listDevices());
     } catch { /* labels stay generic */ }
   }
-  fillSelect($('vsInput'), inputs, s.inputDeviceId);
-  fillSelect($('vsOutput'), outputs, s.outputDeviceId);
+  fillSelect($('vsInput'), inputs, s.inputDeviceId, s.inputDeviceLabel);
+  fillSelect($('vsOutput'), outputs, s.outputDeviceId, s.outputDeviceLabel);
   $('vsOutput').disabled = !outputs.length;
   setRange('vsInVol', Math.round(s.inputVolume * 100));
   setRange('vsOutVol', Math.round(s.outputVolume * 100));
@@ -351,10 +351,26 @@ function closeVoiceSettings() {
   if (voice.micTest) voice.setMicTest(false);
   $('voiceSettings').classList.add('hidden');
 }
-function fillSelect(sel, devices, current) {
-  sel.replaceChildren(...devices.map((d) => el('option', { value: d.id, text: d.id === 'default' ? `Default (${d.label.replace(/^Default - /, '')})` : d.label })));
-  if (!devices.length) sel.append(el('option', { value: 'default', text: 'Default' }));
-  sel.value = devices.some((d) => d.id === current) ? current : 'default';
+function fillSelect(sel, devices, current, savedLabel) {
+  sel.replaceChildren(...devices.map((d) => {
+    const o = el('option', { value: d.id, text: d.id === 'default' ? `Default (${d.label.replace(/^Default - /, '')})` : d.label });
+    o.dataset.label = d.label;
+    return o;
+  }));
+  if (!devices.some((d) => d.id === 'default')) sel.prepend(el('option', { value: 'default', text: 'Default' }));
+  // The chosen device isn't connected right now: show it (it's still the choice) instead of
+  // silently showing Default, which made it look like the setting was lost.
+  if (current && current !== 'default' && !devices.some((d) => d.id === current)) {
+    const o = el('option', { value: current, text: `${savedLabel || 'Your chosen device'} (not connected)` });
+    o.dataset.label = savedLabel || '';
+    sel.append(o);
+  }
+  sel.value = current || 'default';
+}
+/** Device choice: the id plus its name (to find it again if Windows gives it a new id). */
+function deviceChoice(sel) {
+  const o = sel.selectedOptions[0];
+  return { id: sel.value, label: (o && o.dataset.label) || '' };
 }
 function setRange(id, v) {
   $(id).value = String(v);
@@ -391,8 +407,14 @@ $('vsAuto').addEventListener('change', () => {
 });
 $('vsModeVad').addEventListener('click', () => changeSettings({ mode: 'vad' }));
 $('vsModePtt').addEventListener('click', () => changeSettings({ mode: 'ptt' }));
-$('vsInput').addEventListener('change', () => changeSettings({ inputDeviceId: $('vsInput').value }));
-$('vsOutput').addEventListener('change', () => changeSettings({ outputDeviceId: $('vsOutput').value }));
+$('vsInput').addEventListener('change', () => {
+  const d = deviceChoice($('vsInput'));
+  changeSettings({ inputDeviceId: d.id, inputDeviceLabel: d.id === 'default' ? '' : d.label });
+});
+$('vsOutput').addEventListener('change', () => {
+  const d = deviceChoice($('vsOutput'));
+  changeSettings({ outputDeviceId: d.id, outputDeviceLabel: d.id === 'default' ? '' : d.label });
+});
 $('vsNoise').addEventListener('change', () => changeSettings({ noiseCancel: $('vsNoise').value }));
 $('vsEc').addEventListener('change', () => changeSettings({ echoCancellation: $('vsEc').checked }));
 $('vsAgc').addEventListener('change', () => changeSettings({ autoGainControl: $('vsAgc').checked }));

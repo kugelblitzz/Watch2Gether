@@ -155,6 +155,10 @@ exit the run).
   44-49 dB consistently at ~0.3 % CPU.
 - **Fullscreen sidebar + multiple monitors**: only cursor positions *inside* the window count
   (`cursorXInWindow`); a monitor to the left is "away", not "at the left edge".
+- **Audio device choices** are saved as id *and* name (`inputDeviceLabel` / `outputDeviceLabel`). Windows
+  can hand a device a new id (another USB port turns "(4- GSP 370)" into "(5- GSP 370)"), so voice.js
+  falls back to matching the name (`deviceKey`). Never overwrite the saved choice when a device is
+  missing or `setSinkId` fails: that used to reset it to the Windows default for good.
 - **mpv `af-command`** on this build needs the filter target named explicitly:
   `af-command w2gduck volume 0.4 volume`.
 - **Electron 33 removed `File.path`**: dropped files go through `webUtils.getPathForFile` in preload.

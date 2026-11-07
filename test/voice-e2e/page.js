@@ -58,6 +58,10 @@ window.engine = new VoiceEngine({
   getPeerPrefs: (id) => window.prefs[id] || { volume: 1, muted: false },
 });
 window.engine.settings.soundCues = false;
+// which sound cues the engine asked for (they stay silent: soundCues is off)
+window.cues = [];
+const realCue = window.engine._cue.bind(window.engine);
+window.engine._cue = (kind) => { window.cues.push(kind); realCue(kind); };
 window.bridge.onVoice((m) => window.engine.handle(m));
 window.bridge.onAudio((b) => window.engine.handleAudio(b));
 

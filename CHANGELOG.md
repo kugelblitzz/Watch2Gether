@@ -4,6 +4,15 @@ What changed in each version, for people using the app. The release workflow cop
 section for the version being released into the GitHub release notes, so write each entry
 for a user, not a developer.
 
+## 0.9.3
+
+**New**
+- A sound plays when someone else joins or leaves voice (it follows "Play sounds for join, leave, mute and deafen" in Voice & Audio settings).
+
+**Fixed**
+- The microphone and speakers you pick in Voice & Audio settings stay picked after restarting the app. They used to go back to the Windows default. If Windows renames the device's id (for example after plugging it into another USB port), the app finds it again by its name. If it's unplugged, the app uses the Windows default for now, shows it as "not connected" in settings, and switches back when you plug it in.
+- If you picked devices before this update, pick them once more in Voice & Audio settings.
+
 ## 0.9.2
 
 **New**
