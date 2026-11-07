@@ -79,8 +79,9 @@ npm test                       # unit + integration (server/session with a fake 
 npm run test:voice             # voice e2e: hidden, SILENT Electron windows, real VoiceEngine + server
 npm run test:hotkeys-real      # real Windows keyboard state; presses synthetic F23/F24 only
 npm run test:embed             # real mpv inside a window; visible for a few seconds
-npm run test:app -- <video>    # whole app + real mpv: layouts, fullscreen, pop out, resume, ... (~1 min, visible,
-                               # moves the real mouse briefly); use a video WITHOUT an audio track
+npm run test:app -- <video>    # whole app + real mpv: layouts, fullscreen, pop out, resume, ... (~1.5 min, visible,
+                               # moves and clicks the real mouse); use a video WITHOUT an audio track. Keep your hands
+                               # off the mouse while it runs: the "bar fades" / "pointer hides" checks need it still
 npm run test:mpv -- <video>    # two real mpv windows syncing (audible if the video has sound)
 npm run dist                   # installer into dist/ (needs vendor/mpv, see README)
 ```

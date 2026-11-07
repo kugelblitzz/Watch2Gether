@@ -144,6 +144,24 @@ class HostServer extends EventEmitter {
   }
 
   /** opts.id / opts.position: restore the same video id and spot (lobby reopened after an update). */
+  /** Back to a lobby without a video (talk, choose the next one). Everyone's player closes. */
+  clearMedia(byName = 'The host') {
+    if (!this.media) return;
+    const name = this.media.name;
+    this.media = null;
+    this.paused = true;
+    this.position = 0;
+    this.updatedAt = Date.now();
+    for (const c of this.clients.values()) {
+      c.buffering = false; // nothing to load: nobody holds the room up
+      c.stalledSince = null;
+      c.ignoredStall = false;
+    }
+    this.membersDirty = true;
+    this._broadcastState();
+    this._event(`${byName} unloaded ${name}`);
+  }
+
   setMedia(filePath, opts = {}) {
     const st = fs.statSync(filePath);
     if (!st.isFile()) throw new Error('Not a file: ' + filePath);

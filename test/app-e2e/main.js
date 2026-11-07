@@ -387,6 +387,20 @@ app.whenReady().then(async () => {
       assert.strictEqual(await js('!!lobby'), true, 'still in the lobby');
     });
 
+    await test('unload the video: back to a lobby without one, player closed; choosing again plays it', async () => {
+      await js('window.confirm = () => true; document.getElementById("unloadVideo").click(); 0');
+      await until(() => js('!(last && last.room && last.room.media)'), 5000, 'no video in the room');
+      await until(() => js('document.getElementById("stagePhText").textContent.includes("No video yet")'), 3000, 'stage says so');
+      await until(() => !videoWindow().isVisible(), 3000, 'video window gone');
+      await until(() => js('!last.player.open'), 5000, 'player closed');
+      assert.strictEqual(await js('document.getElementById("unloadVideo").classList.contains("hidden")'), true, 'nothing to unload now');
+      assert.strictEqual(await js('[...document.querySelectorAll("#log .log-line")].some((l) => /unloaded/.test(l.textContent))'), true, 'activity says who unloaded it');
+      await js(`api.changeVideo(${JSON.stringify(videoFile)}); 0`);
+      await until(async () => (await js('!!(last && last.player && last.player.open && last.room.media)')) && videoWindow().isVisible(), 15000, 'playing again');
+      // a brand-new player: give it a moment for its first frame
+      await until(async () => colorful(inset(await screenRect('#stage'))) > 0.3, 8000, 'movie back in the stage');
+    });
+
     await test('no page errors during the whole run', async () => {
       assert.deepStrictEqual(pageErrors, []);
     });

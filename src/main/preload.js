@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('w2g', {
   droppedFile: (file) => ipcRenderer.invoke('file:info', webUtils.getPathForFile(file)),
   host: (opts) => ipcRenderer.invoke('host:start', opts),
   changeVideo: (filePath) => ipcRenderer.invoke('host:change', filePath),
+  unloadVideo: () => ipcRenderer.invoke('host:clear'),
   join: (opts) => ipcRenderer.invoke('join', opts),
   cmd: (action, position) => ipcRenderer.invoke('session:cmd', { action, position }),
   chat: (text) => ipcRenderer.invoke('session:chat', text),

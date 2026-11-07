@@ -285,6 +285,12 @@ function registerIpc() {
     }
   });
 
+  ipcMain.handle('host:clear', () => {
+    if (!server) throw new Error('You are not hosting a lobby.');
+    server.clearMedia(settings.name || 'The host');
+    if (win && win.isFullScreen()) win.setFullScreen(false); // nothing to watch fullscreen
+    return true;
+  });
   ipcMain.handle('host:change', async (_e, filePath) => {
     if (!server) throw new Error('You are not hosting a lobby.');
     server.setMedia(filePath);

@@ -297,6 +297,14 @@ async function chooseVideo() {
   }
 }
 $('changeVideo').addEventListener('click', chooseVideo);
+$('unloadVideo').addEventListener('click', async () => {
+  if (!confirm('Unload the video for everyone? The lobby stays open, so you can keep talking and choose another one.')) return;
+  try {
+    await api.unloadVideo();
+  } catch (e) {
+    alert('Could not unload the video: ' + cleanError(e));
+  }
+});
 
 // ---------- drag & drop a video onto the window ----------
 
@@ -691,6 +699,9 @@ function render(u) {
   $('mediaName').textContent = media ? media.name : 'No video yet';
   $('pickNow').classList.toggle('hidden', !!media || !isHost);
   $('changeVideo').textContent = media ? 'Change video…' : 'Choose video…';
+  $('unloadVideo').classList.toggle('hidden', !media || !isHost);
+  // the host unloaded the video while we were fullscreen: nothing left to watch
+  if (!media && document.body.classList.contains('fullscreen')) api.fullscreen(false);
   $('playPause').disabled = !media;
   $('seek').disabled = !media;
   $('mediaName').title = media ? media.name : '';

@@ -4,6 +4,11 @@ What changed in each version, for people using the app. The release workflow cop
 section for the version being released into the GitHub release notes, so write each entry
 for a user, not a developer.
 
+## 0.9.2
+
+**New**
+- **Unload video** (host): next to "Change video…" in Now playing. Stops the video for everyone and goes back to a lobby without one, so you can keep talking and pick the next thing. Everyone's player closes, and choosing a new video opens it again.
+
 ## 0.9.1
 
 **Fixed**

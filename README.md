@@ -19,7 +19,7 @@ Watch a video file from one person's PC together with friends, in sync. Anyone i
 
 ## Using it
 
-**Host:** enter your name → **Start lobby** → **Copy invite** and send it to your friends. Choosing a video first is optional: you can start an empty lobby, talk in voice chat while you decide, then hit **Choose video…** in the lobby. Everyone's player opens when you do. An invite looks like `100.101.102.103:8787/K7M2QX`.
+**Host:** enter your name → **Start lobby** → **Copy invite** and send it to your friends. Choosing a video first is optional: you can start an empty lobby, talk in voice chat while you decide, then hit **Choose video…** in the lobby. Everyone's player opens when you do. **Unload video** takes you back to a lobby without one. An invite looks like `100.101.102.103:8787/K7M2QX`.
 
 **Friends:** enter your name → paste the invite → **Join**. If you already have the file, open *"I already have this video"* first and pick it.
 

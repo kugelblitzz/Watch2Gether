@@ -696,6 +696,41 @@ async function test(name, fn) {
     g7.stop(); ks.stop();
   });
 
+  await test('unload the video: everyone back to a lobby without one, players close quietly, a new video reopens them', async () => {
+    const up = port + 14;
+    const us = new HostServer({ port: up });
+    await us.start();
+    us.setMedia(file);
+    const before = FakeMpv.instances.length;
+    const uh = new Session({ baseUrl: `http://127.0.0.1:${up}`, code: us.code, name: 'H', hostToken: us.hostToken, mpvPath: 'fake', resolveLocal: (m) => (us.media && m.id === us.media.id ? us.media.path : null) });
+    const ug = new Session({ baseUrl: `http://127.0.0.1:${up}`, code: us.code, name: 'G', mpvPath: 'fake' });
+    await uh.start();
+    await ug.start();
+    await until(() => FakeMpv.instances.length === before + 2 && FakeMpv.instances.slice(before).every((p) => p.loaded), 2000, 'both players open');
+    const [hp, gp] = FakeMpv.instances.slice(before);
+    us._apply({ name: 'H' }, 'play');
+    await wait(200);
+
+    us.clearMedia('H');
+    await until(() => !uh.playerOpen && !ug.playerOpen, 2000, 'players closed');
+    assert(hp.quitCalled && gp.quitCalled, 'mpv told to quit');
+    hp.emit('exit'); gp.emit('exit'); // the processes end
+    await wait(100);
+    assert.strictEqual(ug.room.media, null);
+    assert.strictEqual(us.paused, true);
+    assert(!us._isWaiting(), 'nobody holds the room up');
+    assert(ug.log.some((l) => /H unloaded movie\.mkv/.test(l.text)), 'everyone is told who unloaded it');
+    assert(!ug.log.some((l) => /Player closed/.test(l.text)), 'not reported as the user closing their player');
+    ug.command('play'); // nothing to play
+    await wait(100);
+    assert.strictEqual(us.paused, true);
+
+    us.setMedia(file); // the next video
+    await until(() => FakeMpv.instances.length === before + 4, 2000, 'players reopen for the new video');
+    await until(() => FakeMpv.instances.slice(before + 2).every((p) => p.loaded), 2000, 'and load it');
+    uh.stop(); ug.stop(); us.stop();
+  });
+
   await test('host changes video -> everyone reloads, paused at 0', async () => {
     const file2 = path.join(dir, 'other.mp4');
     fs.writeFileSync(file2, data.subarray(0, 1000));

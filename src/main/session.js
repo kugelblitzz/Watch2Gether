@@ -139,6 +139,18 @@ class Session extends EventEmitter {
     this._emitUpdate(true);
   }
 
+  /** Close the player because there's nothing to play (not the user closing it). */
+  _closePlayer() {
+    const mpv = this.mpv;
+    this.playerOpen = false;
+    this.loadedMediaId = null;
+    this.loading = false;
+    this.quietExit = mpv;
+    if (mpv) mpv.quit();
+    this._updateBuffering();
+    this._emitUpdate(true);
+  }
+
   /** Open the player and load the current video. Concurrent calls share one attempt. */
   reopenPlayer() {
     if (this.playerOpen) return Promise.resolve();
@@ -316,6 +328,10 @@ class Session extends EventEmitter {
         this.autoOpenedFor = id;
         this.reopenPlayer().catch((e) => this._log('Could not open the player: ' + e.message));
       }
+    } else if (!id && this.playerOpen) {
+      // The host unloaded the video: close the player (no empty black window), quietly.
+      this._closePlayer();
+      this.autoOpenedFor = null;
     } else if (id !== this.loadedMediaId) {
       this._loadMedia();
     }
@@ -427,6 +443,7 @@ class Session extends EventEmitter {
       this.playerOpen = false;
       this.loadedMediaId = null;
       this.loading = false;
+      if (this.quietExit === mpv) return; // we closed it (video unloaded), not the user
       if (!this.closed) {
         this._log('Player closed. Click "Open player" on the video area to get it back.');
         this._updateBuffering();
