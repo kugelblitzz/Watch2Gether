@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld('w2g', {
   onFullscreen: (cb) => ipcRenderer.on('fullscreen', (_e, on) => cb(on)),
   onCursorX: (cb) => ipcRenderer.on('cursor-x', (_e, x) => cb(x)),
   onToggleSidebar: (cb) => ipcRenderer.on('toggle-sidebar', () => cb()),
+  sidebarState: (out) => ipcRenderer.invoke('ui:sidebar', out),
+  toggleSidebar: () => ipcRenderer.invoke('window:toggleSidebar'),
   onVoiceAudio: (cb) => ipcRenderer.on('voice-audio', (_e, bytes) => cb(bytes)),
   onEnded: (cb) => ipcRenderer.on('ended', (_e, reason) => cb(reason)),
 });

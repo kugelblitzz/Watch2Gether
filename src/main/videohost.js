@@ -106,6 +106,7 @@ class VideoHost {
       const b = this.win.getBounds();
       over = p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
     }
+    if (over && this.cursorExempt && this.cursorExempt(p)) over = false; // e.g. over the fullscreen play bar
     this._setCursorHidden(over && !moved && Date.now() - this.lastMove >= CURSOR_IDLE_MS);
   }
 

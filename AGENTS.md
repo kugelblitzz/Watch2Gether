@@ -23,7 +23,8 @@ src/main/            Electron main process (Node)
   session.js         Session: one per app in a lobby; connects to a HostServer, drives mpv to the room clock
   mpv.js             mpv process + JSON IPC over a named pipe
   videohost.js       in-app player: native BaseWindow kept over the stage; mpv draws into it (--wid); cursor auto-hide
-  hotkeys.js         global push-to-talk / mute / deafen keys (uiohook-napi)
+  hotkeys.js         global push-to-talk / mute / deafen keys (polls GetAsyncKeyState via koffi)
+  overlay.js         fullscreen play bar: a small transparent window floating over the video
   updater.js         electron-updater state machine (GitHub Releases)
   changelog.js       reads CHANGELOG.md sections (What's new + release notes)
   env.js             finds Tailscale and mpv, installs mpv via winget
@@ -32,6 +33,7 @@ src/main/            Electron main process (Node)
 src/renderer/        the page (no bundler, classic <script>s sharing globals)
   index.html         all markup; CSP: script-src 'self' 'wasm-unsafe-eval'
   app.js             screens, lobby, player chrome, volume, fullscreen, drag & drop, resume, What's new
+  overlay.html/.js/.css  the fullscreen play bar's own page (same preload / window.w2g API)
   voice.js           VoiceEngine: mic -> noise model -> gate -> Opus (WebCodecs) and back
   voice-worklets.js  AudioWorklets: 20 ms capture frames, jitter-buffered playback
   voice-ui.js        voice bar, member decorations/menu, Voice & Audio settings, hotkeys, ducking
@@ -75,7 +77,7 @@ npm install
 npm start                      # run the app (scripts/start.js strips ELECTRON_RUN_AS_NODE)
 npm test                       # unit + integration (server/session with a fake mpv, updater, hotkeys); what CI runs
 npm run test:voice             # voice e2e: hidden, SILENT Electron windows, real VoiceEngine + server
-npm run test:hotkeys-real      # real keyboard hook; sends synthetic F23/F24 only
+npm run test:hotkeys-real      # real Windows keyboard state; presses synthetic F23/F24 only
 npm run test:embed             # real mpv inside a window; visible for a few seconds
 npm run test:app -- <video>    # whole app + real mpv: layouts, fullscreen, pop out, resume, ... (~1 min, visible,
                                # moves the real mouse briefly); use a video WITHOUT an audio track
@@ -94,6 +96,7 @@ sample); it generates one into %TEMP%.
 | server.js, session.js, util.js, mpv.js | `npm test` (+ `test:app` if it touches the player or lobby flow) |
 | updater.js | `npm test` |
 | hotkeys.js | `npm test` and `test:hotkeys-real` |
+| overlay.js / overlay.* (fullscreen play bar) | `test:app` |
 | voice*.js, voice-ui.js | `npm test` and `test:voice` |
 | videohost.js, layout / fullscreen / player chrome | `test:embed` and `test:app` |
 | anything in the renderer | `test:app` (it fails on any page error) |
@@ -134,13 +137,16 @@ exit the run).
   host is hidden (user32 ShowWindow via koffi), and it must be **re-hidden after every show/resize**;
   Chromium re-shows it shortly after.
 - **HTML can't be drawn over the native video.** Dialogs hide the video while open; the fullscreen
-  sidebar pushes the video aside; messages over the video use mpv's OSD (`session.osd`).
+  sidebar pushes the video aside; messages over the video use mpv's OSD (`session.osd`); the
+  fullscreen play bar is its own transparent, non-focusable window (overlay.js) kept above the video.
 - **mpv can't hide the cursor when embedded** (the parent keeps resetting it; even
   `--cursor-autohide=always` does nothing). The app calls `ShowCursor` from its UI thread instead;
   calls must stay strictly paired.
-- **The uiohook-napi hook must never be stopped and restarted**; in the installed app that left it
-  silently dead (push-to-talk never fired). Start once, gate in JS, stop only on quit.
-- **electron-builder `npmRebuild: false`**: native modules (uiohook-napi, koffi) are N-API with
+- **No low-level input hook.** uiohook-napi kept ending up silently dead in the installed app (no
+  events, no error; first after restarts, later even on its first start), so push-to-talk and key
+  assignment broke, while every test outside the installed app passed. Hotkeys now poll
+  `GetAsyncKeyState` for the bound keys only (20 ms), which can't die that way. Don't bring a hook back.
+- **electron-builder `npmRebuild: false`**: the native module (koffi) is N-API with
   prebuilt binaries; rebuilding needs Visual Studio, which isn't installed.
 - **CSP needs `'wasm-unsafe-eval'`** for the noise-suppression model (WebAssembly). Without it the
   model silently outputs silence; a watchdog in voice.js falls back to Chromium's suppression.
@@ -151,6 +157,8 @@ exit the run).
 - **mpv `af-command`** on this build needs the filter target named explicitly:
   `af-command w2gduck volume 0.4 volume`.
 - **Electron 33 removed `File.path`**: dropped files go through `webUtils.getPathForFile` in preload.
+- **Tests that look for "the app window"** must pick the main window by its page (index.html):
+  the fullscreen play bar is a second BrowserWindow.
 - **Screen captures in tests** (`CopyFromScreen`) can land mid-way through Windows' fullscreen
   animation; wait ~2.5 s. A popped-out mpv window opens mid-screen, over the app.
 - **Editing files through shell heredocs** can eat a level of backslash escaping (regexes like

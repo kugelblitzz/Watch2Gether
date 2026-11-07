@@ -1,0 +1,26 @@
+/* Fullscreen play bar window: transparent, just the floating bar (reuses styles.css controls). */
+html, body.overlay {
+  background: transparent !important;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+}
+body.overlay { display: block; padding: 0; margin: 0; }
+body.overlay .bar {
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+  border-radius: 18px;
+  /* the window behind is native video, which can't be blurred: a solid-ish dark glass */
+  background: rgba(20, 20, 23, .86);
+  border: 1px solid rgba(255, 255, 255, .1);
+  box-shadow: none;
+  animation: bar-in .18s var(--ease) both;
+}
+body.overlay .controls .big { width: 46px; height: 46px; }
+body.overlay #seek { flex: 1; }
+body.overlay .icon-btn { flex: none; }
+@keyframes bar-in { from { opacity: 0; transform: translateY(6px); } }

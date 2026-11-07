@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'">
+  <title>Watch2Gether controls</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="overlay.css">
+</head>
+<body class="overlay">
+  <!-- Fullscreen play bar: its own small window floating over the video (see src/main/overlay.js). -->
+  <div class="bar controls">
+    <button id="playPause" class="big" title="Play / pause (Space)" aria-label="Play or pause">
+      <svg class="i-play" viewBox="0 0 10 12" fill="currentColor"><path d="M0 1.1v9.8a1 1 0 0 0 1.5.86l8.2-4.9a1 1 0 0 0 0-1.72L1.5.24A1 1 0 0 0 0 1.1z"/></svg>
+      <svg class="i-pause" viewBox="0 0 12 12" fill="currentColor"><rect x="1" y="0" width="3.6" height="12" rx="1.2"/><rect x="7.4" y="0" width="3.6" height="12" rx="1.2"/></svg>
+    </button>
+    <span id="timeCur" class="time">0:00</span>
+    <input type="range" id="seek" min="0" max="1" value="0" step="0.1" aria-label="Seek">
+    <span id="timeDur" class="time">0:00</span>
+    <div class="volume">
+      <button id="volBtn" class="icon-btn" title="Mute" aria-label="Mute">
+        <svg class="vi" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path id="volWave1" d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/><path id="volWave2" d="M18.5 6.5a8 8 0 0 1 0 11"/><path id="volX" d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+      </button>
+      <input type="range" id="volSlider" class="slider" min="0" max="130" step="1" value="100" aria-label="Volume">
+    </div>
+    <button id="sidebarBtn" class="icon-btn" title="Sidebar (Tab)" aria-label="Show or hide the sidebar">
+      <svg class="vi" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/></svg>
+    </button>
+    <button id="exitFs" class="icon-btn" title="Exit fullscreen (Esc)" aria-label="Exit fullscreen">
+      <svg class="vi" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+    </button>
+  </div>
+  <script src="overlay.js"></script>
+</body>
+</html>

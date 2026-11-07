@@ -111,8 +111,10 @@ function snapshot(name, b) {
 const inset = (r, d = 24) => ({ x: r.x + d, y: r.y + d, width: r.width - 2 * d, height: r.height - 2 * d });
 
 app.whenReady().then(async () => {
-  await until(() => BrowserWindow.getAllWindows().length > 0, 10000, 'app window');
-  const win = BrowserWindow.getAllWindows()[0];
+  // the main window (there's also the fullscreen play bar window)
+  const mainWindow = () => BrowserWindow.getAllWindows().find((w) => /renderer[\\/]index\.html$/.test(w.webContents.getURL()));
+  await until(() => !!mainWindow(), 10000, 'app window');
+  const win = mainWindow();
   await until(() => !win.webContents.isLoading(), 10000, 'page loaded');
   win.setBounds({ x: 80, y: 60, width: 1200, height: 760 });
   const js = (code) => win.webContents.executeJavaScript(code);
@@ -217,6 +219,55 @@ app.whenReady().then(async () => {
       assert.strictEqual(await js('document.body.classList.contains("peek")'), true, 'stays while pinned');
       await js('toggleSidebar(); 0');
       assert.strictEqual(await js('document.body.classList.contains("peek")'), false);
+    });
+
+    await test('fullscreen play bar: shows on mouse move, hides when still, stays while paused or the sidebar is out', async () => {
+      const bar = () => BrowserWindow.getAllWindows().find((w) => /overlay\.html$/.test(w.webContents.getURL()));
+      assert(bar(), 'play bar window exists');
+      const home = screen.getCursorScreenPoint();
+      try {
+        await js('api.cmd("play"); 0');
+        await until(() => js('!last.room.paused'), 5000, 'playing');
+        const stage = await screenRect('#stage');
+        const cx = Math.round(stage.x + stage.width / 2);
+        const cy = Math.round(stage.y + stage.height / 3);
+        SetCursorPos(cx, cy);
+        await wait(150);
+        SetCursorPos(cx + 20, cy + 10); // a real move
+        await until(() => bar().isVisible(), 2000, 'bar appears on mouse move');
+        const b = bar().getBounds();
+        assert(b.y + b.height <= stage.y + stage.height && b.y > stage.y + stage.height / 2, 'at the bottom of the video');
+        assert(b.x >= stage.x && b.x + b.width <= stage.x + stage.width, 'within the video');
+        await until(() => !bar().isVisible(), 5000, 'hides after a few still seconds while playing');
+
+        await js('api.cmd("pause"); 0');
+        await until(() => bar().isVisible(), 3000, 'paused: bar comes back');
+        await wait(3500);
+        assert(bar().isVisible(), 'and stays while paused');
+        snapshot('3-fullscreen-bar', win.getContentBounds());
+        await js('api.cmd("play"); 0');
+        await until(() => !bar().isVisible(), 6000, 'hides again once playing');
+
+        win.webContents.send('cursor-x', 3); // sidebar slides in
+        await until(() => js('document.body.classList.contains("peek")'), 2000, 'peek');
+        await until(() => bar().isVisible(), 2000, 'bar shows with the sidebar');
+        await wait(1200);
+        const side = await screenRect('#sidebar');
+        assert(bar().getBounds().x >= side.x + side.width, 'bar follows the video, beside the sidebar');
+        await wait(2500);
+        assert(bar().isVisible(), 'and stays while the sidebar is out');
+        win.webContents.send('cursor-x', 1500);
+        await until(() => js('!document.body.classList.contains("peek")'), 3000, 'sidebar away');
+
+        // the bar's own buttons work
+        await js('api.cmd("pause"); 0');
+        await until(() => bar().isVisible(), 3000, 'bar up (paused)');
+        await bar().webContents.executeJavaScript('document.getElementById("playPause").click(); 0');
+        await until(() => js('!last.room.paused'), 3000, 'play on the bar plays the room');
+        await js('api.cmd("pause"); 0');
+      } finally {
+        SetCursorPos(home.x, home.y);
+      }
     });
 
     await test('the mouse pointer hides over the video after 2 s still, and comes back when it moves', async () => {

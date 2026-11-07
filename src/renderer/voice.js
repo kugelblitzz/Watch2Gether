@@ -79,7 +79,11 @@ function loadVoiceSettings() {
   if (saved.noiseCancel == null && saved.noiseSuppression === false) saved.noiseCancel = 'off'; // v0.4.0 setting
   if (saved.noiseCancel && !['off', 'standard', 'gtcrn'].includes(saved.noiseCancel)) saved.noiseCancel = 'gtcrn';
   delete saved.noiseSuppression;
-  return { ...VOICE_DEFAULTS, ...saved, binds: { ...VOICE_DEFAULTS.binds, ...(saved.binds || {}) } };
+  // Keys bound before 0.8.1 used another key-code format (a removed input hook): drop them, so
+  // the settings show "Click to set" instead of a key that would never fire.
+  const binds = {};
+  for (const [k, b] of Object.entries(saved.binds || {})) if (b && Number.isInteger(b.vk)) binds[k] = b;
+  return { ...VOICE_DEFAULTS, ...saved, binds: { ...VOICE_DEFAULTS.binds, ...binds } };
 }
 
 function levelDb(analyser, buf) {

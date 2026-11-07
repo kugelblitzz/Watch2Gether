@@ -1,53 +1,88 @@
 'use strict';
 
 /**
- * Global hotkeys for voice chat (push-to-talk, toggle mute, toggle deafen) that
- * work while another window (e.g. the fullscreen player) has focus.
+ * Global hotkeys for voice chat (push-to-talk, toggle mute, toggle deafen) that work
+ * while another window (e.g. the fullscreen player) has focus.
  *
- * Electron's globalShortcut only reports key *presses*, and push-to-talk needs
- * the release too, so this uses a low-level input hook (uiohook-napi).
- * Privacy: the hook starts the first time voice needs it, and only bound keys (or the
- * one key being chosen in settings) are ever reported to the window; everything else
- * is dropped right here.
+ * How: every 20 ms, ask Windows whether the bound key is held (GetAsyncKeyState, via
+ * koffi). That's all. No input hook: the low-level hook used before (uiohook-napi)
+ * kept ending up silently dead in the installed app (no events, no error) in ways that
+ * never reproduced anywhere else, so push-to-talk and key assignment broke.
  *
- * The native hook is started once and then left running until the app quits.
- * Stopping and restarting it (e.g. stopping inside a key event when a key was just
- * chosen, then starting again to watch the new key) left it silently dead in the
- * installed app (v0.5.0): no events, no error. Whether input does anything is
- * decided here instead (`enabled`, `capture`).
+ * Privacy: only the bound keys are looked at; while you choose a key in settings, all
+ * keys are checked for a fresh press until one is picked. Nothing else is read.
  *
- * Binding: { type: 'key', code: <uiohook keycode>, label } | { type: 'mouse', button: 3..5, label }
+ * Binding: { vk: <Windows virtual-key code>, label }. Mouse middle / side buttons are
+ * virtual keys too (4, 5, 6). Left / right click can't be bound.
  */
 
 const { EventEmitter } = require('events');
 
-/** Mouse buttons that may be bound: middle and the two side buttons, never left/right click. */
-const BINDABLE_MOUSE = new Set([3, 4, 5]);
-const MOUSE_LABELS = { 3: 'Middle mouse', 4: 'Mouse 4', 5: 'Mouse 5' };
+const POLL_MS = 20;
 const ACTIONS = ['ptt', 'mute', 'deafen'];
+const VK_ESCAPE = 0x1b;
+const NOT_BINDABLE = new Set([0x01, 0x02, 0x10, 0x11, 0x12]); // clicks; generic Shift/Ctrl/Alt (left/right ones are)
 
-function defaultLoadHook() {
-  const { uIOhook, UiohookKey } = require('uiohook-napi');
-  const names = {};
-  for (const [name, code] of Object.entries(UiohookKey)) if (names[code] == null) names[code] = name;
-  return { hook: uIOhook, keyName: (code) => names[code] || `Key ${code}` };
+/** Names Windows gets wrong or leaves empty (navigation keys come back as numpad ones). */
+const NAMES = {
+  0x04: 'Middle mouse', 0x05: 'Mouse 4', 0x06: 'Mouse 5',
+  0x08: 'Backspace', 0x09: 'Tab', 0x0d: 'Enter', 0x13: 'Pause', 0x14: 'Caps Lock', 0x1b: 'Esc', 0x20: 'Space',
+  0x21: 'Page Up', 0x22: 'Page Down', 0x23: 'End', 0x24: 'Home',
+  0x25: 'Left', 0x26: 'Up', 0x27: 'Right', 0x28: 'Down',
+  0x2c: 'Print Screen', 0x2d: 'Insert', 0x2e: 'Delete',
+  0x5b: 'Left Win', 0x5c: 'Right Win', 0x5d: 'Menu',
+  0x90: 'Num Lock', 0x91: 'Scroll Lock',
+  0xa0: 'Left Shift', 0xa1: 'Right Shift', 0xa2: 'Left Ctrl', 0xa3: 'Right Ctrl', 0xa4: 'Left Alt', 0xa5: 'Right Alt',
+};
+for (let i = 1; i <= 24; i++) NAMES[0x6f + i] = 'F' + i; // F1 = 0x70 ... F24 = 0x87
+
+/** The real keyboard, through user32 (Windows). Tests pass a fake one. */
+function defaultKeyboard() {
+  if (process.platform !== 'win32') throw new Error('Global hotkeys are only supported on Windows');
+  const koffi = require('koffi');
+  const u = koffi.load('user32.dll');
+  const GetAsyncKeyState = u.func('short __stdcall GetAsyncKeyState(int vk)');
+  const MapVirtualKeyW = u.func('uint32_t __stdcall MapVirtualKeyW(uint32_t code, uint32_t type)');
+  const GetKeyNameTextW = u.func('int __stdcall GetKeyNameTextW(long lparam, _Out_ uint8_t *buf, int size)');
+  return {
+    isDown: (vk) => (GetAsyncKeyState(vk) & 0x8000) !== 0,
+    keyName: (vk) => {
+      const sc = MapVirtualKeyW(vk, 0); // MAPVK_VK_TO_VSC
+      if (!sc) return '';
+      const buf = Buffer.alloc(128);
+      const n = GetKeyNameTextW(sc << 16, buf, 64);
+      return buf.toString('utf16le', 0, n * 2);
+    },
+  };
 }
 
-function prettyKey(name) {
-  const map = { Backquote: '`', Ctrl: 'Left Ctrl', CtrlRight: 'Right Ctrl', Alt: 'Left Alt', AltRight: 'Right Alt', Shift: 'Left Shift', ShiftRight: 'Right Shift', Meta: 'Win', CapsLock: 'Caps Lock' };
-  return map[name] || name.replace(/^Numpad/, 'Num ');
+function labelFor(vk, kb) {
+  if (NAMES[vk]) return NAMES[vk];
+  let name = '';
+  try { name = kb.keyName(vk); } catch { /* fall through */ }
+  return name || `Key ${vk}`;
+}
+
+function valid(b) {
+  return !!b && Number.isInteger(b.vk) && b.vk > 0 && b.vk < 0xff && !NOT_BINDABLE.has(b.vk);
 }
 
 class Hotkeys extends EventEmitter {
-  constructor({ loadHook = defaultLoadHook } = {}) {
+  constructor({ keyboard = null, pollMs = POLL_MS } = {}) {
     super();
-    this.loadHook = loadHook;
-    this.lib = null;
-    this.running = false;
+    this.kbFactory = keyboard ? () => keyboard : defaultKeyboard;
+    this.kb = null;
+    this.pollMs = pollMs;
+    this.timer = null;
     this.bindings = {};
     this.enabled = false;
-    this.held = new Set(); // actions whose input is currently down (suppresses auto-repeat)
-    this.capture = null;   // pending capture { resolve }
+    this.held = new Set(); // actions whose key is down right now
+    this.capture = null;   // { resolve, wasDown: Set } while choosing a key
+  }
+
+  /** True while polling (in voice with something bound, or choosing a key). */
+  get running() {
+    return !!this.timer;
   }
 
   /** @param bindings { ptt?, mute?, deafen? }  @param enabled  true while in voice */
@@ -55,115 +90,117 @@ class Hotkeys extends EventEmitter {
     this.bindings = {};
     for (const a of ACTIONS) if (bindings && valid(bindings[a])) this.bindings[a] = bindings[a];
     this.enabled = !!enabled;
+    if (!this.enabled) this._releaseAll();
+    // a binding that changed while its key was held must not stay "held"
+    for (const a of [...this.held]) if (!this.bindings[a]) this._release(a);
     this._sync();
   }
 
-  /** Wait for the next key or bindable mouse button. Resolves null on Escape or cancel. */
+  /** Wait for the next fresh key / mouse-button press. Resolves null on Escape or cancel. */
   captureNext() {
     if (this.capture) this.capture.resolve(null);
     return new Promise((resolve) => {
-      this.capture = { resolve };
+      // keys already down when choosing starts (e.g. the shortcut that opened it) don't count
+      const wasDown = new Set();
+      if (this._keyboard()) for (let vk = 1; vk < 0xff; vk++) if (this._down(vk)) wasDown.add(vk);
+      this.capture = { resolve, wasDown };
       this._sync();
     });
   }
 
   cancelCapture() {
-    if (this.capture) {
-      this.capture.resolve(null);
-      this.capture = null;
-      this._sync();
-    }
+    if (!this.capture) return;
+    this.capture.resolve(null);
+    this.capture = null;
+    this._sync();
   }
 
-  /** Out of voice: ignore everything (the native hook stays up; see above). */
+  /** Out of voice: release everything and stop polling. */
   stop() {
     this.enabled = false;
+    this._releaseAll();
     this.cancelCapture();
     this._sync();
   }
 
-  /** App is quitting: remove the native hook. */
+  /** App is quitting. */
   shutdown() {
     this.stop();
-    if (this.running) this._stopHook();
   }
 
   // ---------- internals ----------
+
+  _keyboard() {
+    if (this.kb) return this.kb;
+    try {
+      this.kb = this.kbFactory();
+    } catch (e) {
+      this.emit('error', e);
+      this.kb = null;
+    }
+    return this.kb;
+  }
+
+  _down(vk) {
+    try { return this.kb.isDown(vk); } catch { return false; }
+  }
 
   _wanted() {
     return !!this.capture || (this.enabled && Object.keys(this.bindings).length > 0);
   }
 
   _sync() {
-    if (this._wanted() && !this.running) this._start();
-    if (!this.enabled) this._releaseAll();
-  }
-
-  _start() {
-    try {
-      if (!this.lib) {
-        this.lib = this.loadHook();
-        const h = this.lib.hook;
-        h.on('keydown', (e) => this._input({ type: 'key', code: e.keycode }, true));
-        h.on('keyup', (e) => this._input({ type: 'key', code: e.keycode }, false));
-        h.on('mousedown', (e) => this._input({ type: 'mouse', button: e.button }, true));
-        h.on('mouseup', (e) => this._input({ type: 'mouse', button: e.button }, false));
-      }
-      this.lib.hook.start();
-      this.running = true;
-    } catch (e) {
-      this.running = false;
-      this.emit('error', e);
+    const want = this._wanted() && !!this._keyboard();
+    if (want && !this.timer) {
+      this.timer = setInterval(() => this._tick(), this.pollMs);
+      if (this.timer.unref) this.timer.unref();
+    } else if (!want && this.timer) {
+      clearInterval(this.timer); // polling (unlike a hook) is safe to stop and start again
+      this.timer = null;
     }
   }
 
-  _stopHook() {
-    try { this.lib.hook.stop(); } catch { /* ignore */ }
-    this.running = false;
+  _tick() {
+    if (this.capture) return this._captureTick();
+    if (!this.enabled) return;
+    for (const [action, b] of Object.entries(this.bindings)) {
+      const down = this._down(b.vk);
+      if (down && !this.held.has(action)) {
+        this.held.add(action);
+        this.emit('action', action, true);
+      } else if (!down && this.held.has(action)) {
+        this._release(action);
+      }
+    }
   }
 
-  _releaseAll() {
-    for (const a of this.held) if (a === 'ptt') this.emit('action', 'ptt', false);
-    this.held.clear();
-  }
-
-  _input(inp, down) {
-    if (this.capture) {
-      if (!down) return;
-      if (inp.type === 'mouse' && !BINDABLE_MOUSE.has(inp.button)) return; // ignore clicks while choosing
-      const { resolve } = this.capture;
+  _captureTick() {
+    const c = this.capture;
+    for (let vk = 1; vk < 0xff; vk++) {
+      const down = this._down(vk);
+      if (!down) {
+        c.wasDown.delete(vk); // released: a new press of it counts now
+        continue;
+      }
+      if (c.wasDown.has(vk) || NOT_BINDABLE.has(vk)) continue;
       this.capture = null;
-      const escape = inp.type === 'key' && this.lib && this.lib.keyName(inp.code) === 'Escape';
-      resolve(escape ? null : this._describe(inp));
+      c.resolve(vk === VK_ESCAPE ? null : { vk, label: labelFor(vk, this.kb) });
+      // wait for this key's release before it can act as a binding (it was just chosen)
+      for (const [action, b] of Object.entries(this.bindings)) if (b.vk === vk) this.held.add(action);
       this._sync();
       return;
     }
-    if (!this.enabled) return;
-    for (const [action, b] of Object.entries(this.bindings)) {
-      if (!same(b, inp)) continue;
-      if (down) {
-        if (this.held.has(action)) continue; // key auto-repeat
-        this.held.add(action);
-        this.emit('action', action, true);
-      } else if (this.held.has(action)) {
-        this.held.delete(action);
-        if (action === 'ptt') this.emit('action', action, false);
-      }
-    }
   }
 
-  _describe(inp) {
-    if (inp.type === 'mouse') return { type: 'mouse', button: inp.button, label: MOUSE_LABELS[inp.button] };
-    return { type: 'key', code: inp.code, label: prettyKey(this.lib.keyName(inp.code)) };
+  _release(action) {
+    if (!this.held.has(action)) return;
+    this.held.delete(action);
+    if (action === 'ptt') this.emit('action', 'ptt', false); // mute / deafen toggle on press only
+  }
+
+  _releaseAll() {
+    for (const a of [...this.held]) this._release(a);
   }
 }
 
-function valid(b) {
-  return !!b && ((b.type === 'key' && Number.isInteger(b.code)) || (b.type === 'mouse' && BINDABLE_MOUSE.has(b.button)));
-}
-
-function same(b, inp) {
-  return b.type === inp.type && (b.type === 'key' ? b.code === inp.code : b.button === inp.button);
-}
-
-module.exports = { Hotkeys };
+module.exports = { Hotkeys, labelFor, NAMES };

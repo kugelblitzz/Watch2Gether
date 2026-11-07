@@ -4,6 +4,14 @@ What changed in each version, for people using the app. The release workflow cop
 section for the version being released into the GitHub release notes, so write each entry
 for a user, not a developer.
 
+## 0.9.0
+
+**New**
+- **Play bar in fullscreen:** move the mouse and play / pause, the seek bar, volume, the sidebar button and exit fullscreen appear over the bottom of the video, then fade away after a few seconds. It stays while the movie is paused, while the sidebar is out, and while your mouse is on it.
+
+**Fixed**
+- **Push to talk works again, including choosing a key.** It now asks Windows directly whether your key is held, instead of using a keyboard hook that could silently stop working. If you had set push-to-talk, mute or deafen keys before, set them again once (they were saved in the old format).
+
 ## 0.8.0
 
 **New**

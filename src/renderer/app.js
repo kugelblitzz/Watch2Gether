@@ -464,6 +464,7 @@ function setPeek(on, pinned = false) {
   clearTimeout(peekTimer);
   peekTimer = null;
   peekPinned = on && pinned;
+  if (document.body.classList.contains('peek') !== on) api.sidebarState(on); // keeps the fullscreen play bar up
   document.body.classList.toggle('peek', on);
 }
 function toggleSidebar() {

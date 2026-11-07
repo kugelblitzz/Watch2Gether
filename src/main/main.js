@@ -48,6 +48,8 @@ let session = null;
 let lobbyInfo = null;
 let settings = { name: '', port: DEFAULT_PORT, mpvPath: null, lastInvite: '', allowLan: false, playerMode: 'embedded', volume: 100 };
 let videoHost = null; // native window the in-app player draws into
+let overlay = null;   // fullscreen play bar floating over the video
+let sidebarOut = false; // fullscreen sidebar shown (keeps the play bar up)
 let lastJoin = null;  // { invite, localPath } of the lobby we joined as a guest
 
 /** A lobby saved before "Restart to update" is only picked up again within this window. */
@@ -136,7 +138,14 @@ function saveVolumeSoon(v) {
 }
 
 function wireSession(s) {
-  s.on('update', (u) => send('update', { ...u, lobby: lobbyInfo }));
+  s.on('update', (u) => {
+    const payload = { ...u, lobby: lobbyInfo };
+    send('update', payload);
+    if (overlay) {
+      overlay.send('update', payload);
+      overlay.setKeep(sidebarOut || !!(u.room && u.room.media && u.room.paused));
+    }
+  });
   s.on('voice', (msg) => send('voice', msg));
   s.on('voice-audio', (buf) => send('voice-audio', buf));
   s.on('volume', (v) => {
@@ -316,7 +325,13 @@ function registerIpc() {
   });
   ipcMain.handle('video:rect', (_e, rect) => {
     if (videoHost) videoHost.setRect(rect && Number.isFinite(rect.x) ? rect : null);
+    if (overlay) overlay.refresh(); // follow the video (e.g. the sidebar pushed it over)
   });
+  ipcMain.handle('ui:sidebar', (_e, out) => {
+    sidebarOut = !!out;
+    if (overlay) overlay.setKeep(sidebarOut || !!(session && session.room && session.room.media && session.room.paused));
+  });
+  ipcMain.handle('window:toggleSidebar', () => send('toggle-sidebar'));
   ipcMain.handle('player:mode', async (_e, mode) => {
     if (mode !== 'embedded' && mode !== 'popout') return settings.playerMode;
     if (mode !== settings.playerMode) {
@@ -447,12 +462,15 @@ function createWindow() {
   win.webContents.on('console-message', (_e, level, message, line, source) => {
     if (level >= 2) console.error(`[renderer] ${message} (${source}:${line})`);
   });
-  win.on('closed', () => { win = null; videoHost = null; });
+  win.on('closed', () => { win = null; videoHost = null; overlay = null; });
 
   // In-app player: a native window mpv draws into, kept over the video area.
   try {
     const { VideoHost } = require('./videohost');
     videoHost = new VideoHost(win);
+    const { ControlsOverlay } = require('./overlay');
+    overlay = new ControlsOverlay(win, videoHost);
+    videoHost.cursorExempt = (p) => overlay && overlay.contains(p); // pointer stays visible on the play bar
   } catch (e) {
     console.error('[videohost] unavailable, using the separate player window', e && e.message);
   }
@@ -464,11 +482,13 @@ function createWindow() {
   win.on('enter-full-screen', () => {
     send('fullscreen', true);
     if (session && session.embedded) session.osd('Tab: sidebar   ·   Esc: exit fullscreen', 3000);
+    if (overlay) overlay.setActive(!!(session && session.embedded));
     clearInterval(edgeTimer);
     edgeTimer = setInterval(() => {
       if (!win) return;
       const p = screen.getCursorScreenPoint();
       const b = win.getContentBounds();
+      if (overlay) overlay.onCursor(p);
       const x = cursorXInWindow(p, b); // null when outside, e.g. on another monitor
       if (x !== lastX) {
         lastX = x;
@@ -479,6 +499,8 @@ function createWindow() {
   win.on('leave-full-screen', () => {
     clearInterval(edgeTimer);
     lastX = null;
+    sidebarOut = false;
+    if (overlay) overlay.setActive(false);
     send('fullscreen', false);
   });
   win.on('closed', () => clearInterval(edgeTimer));
