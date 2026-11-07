@@ -4,6 +4,11 @@ What changed in each version, for people using the app. The release workflow cop
 section for the version being released into the GitHub release notes, so write each entry
 for a user, not a developer.
 
+## 0.9.1
+
+**Fixed**
+- The fullscreen play bar's buttons work: play / pause, seeking, volume, the sidebar button and exit fullscreen. In 0.9.0 the bar showed up but ignored clicks once it had faded out and back in.
+
 ## 0.9.0
 
 **New**

@@ -3,9 +3,15 @@
 /**
  * Fullscreen play bar. HTML can't be drawn over the native video, so in fullscreen the
  * controls live in their own small transparent window that floats over the bottom of the
- * video (owned by the main window, never takes focus). It shows when the mouse moves,
- * while the sidebar is out or the movie is paused, and hides after a few still seconds
+ * video (owned by the main window, never takes focus). It appears when the mouse moves,
+ * while the sidebar is out or the movie is paused, and fades after a few still seconds
  * (unless the pointer rests on it).
+ *
+ * The window is never hidden and shown again: after a hide() / show() a non-focusable
+ * Electron window stops receiving mouse clicks (0 of 3 after a few cycles, measured), which
+ * made every button on the bar dead in v0.9.0. Instead, "hidden" = fully transparent and
+ * click-through, "shown" = opaque and clickable; the window itself is created on entering
+ * fullscreen and destroyed on leaving it.
  */
 
 const path = require('path');
@@ -21,42 +27,26 @@ class ControlsOverlay {
   constructor(owner, videoHost) {
     this.owner = owner;
     this.videoHost = videoHost;
-    this.active = false;   // app is fullscreen with the in-app player
-    this.keep = false;     // sidebar out, or paused: stay visible
+    this.win = null;         // exists only while fullscreen
+    this.ready = false;      // page loaded and window shown (invisibly)
+    this.shown = false;      // opaque and clickable right now
+    this.active = false;     // fullscreen with the in-app player
+    this.keep = false;       // sidebar out, or paused: stay visible
     this.lastMove = 0;
     this.lastPoint = null;
-    this.win = new BrowserWindow({
-      parent: owner,
-      show: false,
-      frame: false,
-      transparent: true,
-      backgroundColor: '#00000000',
-      resizable: false,
-      movable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      skipTaskbar: true,
-      hasShadow: false,
-      focusable: false, // clicks work, but the video / app keep the keyboard
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        backgroundThrottling: false,
-      },
-    });
-    this.win.loadFile(path.join(__dirname, '..', 'renderer', 'overlay.html'));
-    this.win.webContents.on('will-navigate', (e) => e.preventDefault());
-    this.win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    this.lastUpdate = null;  // latest lobby update, for a freshly created bar
     owner.on('closed', () => this.destroy());
   }
 
   /** Fullscreen with the in-app player on / off. */
   setActive(on) {
     this.active = !!on;
-    this.lastMove = Date.now(); // entering fullscreen counts as activity: show it briefly
+    if (this.active) {
+      this.lastMove = Date.now(); // entering fullscreen counts as activity: show it briefly
+      this._create();
+    } else {
+      this.destroy();
+    }
     this._update();
   }
 
@@ -80,29 +70,81 @@ class ControlsOverlay {
     this._update();
   }
 
-  /** Is the pointer over the bar right now? (the pointer doesn't auto-hide there) */
+  /** Is the pointer over the visible bar? (the pointer doesn't auto-hide there) */
   contains(p) {
-    if (this.win.isDestroyed() || !this.win.isVisible()) return false;
+    if (!this.win || this.win.isDestroyed() || !this.shown) return false;
     const b = this.win.getBounds();
     return p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
   }
 
   /** Forward state (play position, volume, ...) to the bar. */
   send(channel, payload) {
-    if (!this.win.isDestroyed()) this.win.webContents.send(channel, payload);
+    if (channel === 'update') this.lastUpdate = payload;
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.send(channel, payload);
+  }
+
+  _create() {
+    if (this.win && !this.win.isDestroyed()) return;
+    this.ready = false;
+    this.shown = false;
+    const win = new BrowserWindow({
+      parent: this.owner,
+      show: false,
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      hasShadow: false,
+      focusable: false, // clicks work, but the video / app keep the keyboard
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        backgroundThrottling: false,
+      },
+    });
+    this.win = win;
+    win.webContents.on('will-navigate', (e) => e.preventDefault());
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.once('did-finish-load', () => {
+      if (win.isDestroyed()) return;
+      if (this.lastUpdate) win.webContents.send('update', this.lastUpdate); // no stale times
+      // shown once, invisible and click-through; from now on only faded in / out
+      win.setOpacity(0);
+      win.setIgnoreMouseEvents(true);
+      this._place();
+      win.showInactive();
+      this.ready = true;
+      this._update();
+    });
+    win.loadFile(path.join(__dirname, '..', 'renderer', 'overlay.html'));
   }
 
   _update() {
-    if (this.win.isDestroyed()) return;
+    if (!this.win || this.win.isDestroyed() || !this.ready) return;
     const host = this.videoHost;
     const rect = host && host.rect;
     const recent = Date.now() - this.lastMove < HIDE_AFTER_MS;
     const hovered = this.lastPoint && this.contains(this.lastPoint);
-    const show = this.active && !!rect && host.win.isVisible() && (recent || this.keep || hovered);
-    if (!show) {
-      if (this.win.isVisible()) this.win.hide();
-      return;
-    }
+    const want = this.active && !!rect && host.win.isVisible() && (recent || this.keep || hovered);
+    if (want) this._place();
+    if (want === this.shown) return;
+    this.shown = want;
+    this.win.setOpacity(want ? 1 : 0);
+    this.win.setIgnoreMouseEvents(!want); // invisible = clicks go through to the video
+    if (want) this.win.moveTop(); // above the video window
+  }
+
+  /** Over the bottom of the video, centred. Only moves it when the position changed. */
+  _place() {
+    const rect = this.videoHost && this.videoHost.rect;
+    if (!rect) return;
     const c = this.owner.getContentBounds();
     const width = Math.min(MAX_WIDTH, Math.round(rect.width - 2 * MARGIN));
     const bounds = {
@@ -115,14 +157,13 @@ class ControlsOverlay {
     if (now.x !== bounds.x || now.y !== bounds.y || now.width !== bounds.width || now.height !== bounds.height) {
       this.win.setBounds(bounds); // only when it moved: this runs on every 40 ms cursor poll
     }
-    if (!this.win.isVisible()) {
-      this.win.showInactive();
-      this.win.moveTop(); // above the video window
-    }
   }
 
   destroy() {
-    if (!this.win.isDestroyed()) this.win.destroy();
+    if (this.win && !this.win.isDestroyed()) this.win.destroy();
+    this.win = null;
+    this.ready = false;
+    this.shown = false;
   }
 }
 

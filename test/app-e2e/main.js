@@ -44,6 +44,16 @@ const user32 = koffi.load('user32.dll');
 const CURSORINFO = koffi.struct('W2GTestCursorInfo', { cbSize: 'uint32', flags: 'uint32', hCursor: 'intptr_t', x: 'long', y: 'long' });
 const GetCursorInfo = user32.func('bool __stdcall GetCursorInfo(_Inout_ W2GTestCursorInfo *ci)');
 const SetCursorPos = user32.func('bool __stdcall SetCursorPos(int x, int y)');
+const mouseEvent = user32.func('void __stdcall mouse_event(uint32_t flags, uint32_t dx, uint32_t dy, uint32_t data, uintptr_t extra)');
+/** A real left click (the OS input path, not a DOM click) at a screen point. */
+async function realClick(x, y) {
+  SetCursorPos(x, y);
+  await new Promise((r) => setTimeout(r, 150));
+  mouseEvent(2, 0, 0, 0, 0); // left down
+  await new Promise((r) => setTimeout(r, 60));
+  mouseEvent(4, 0, 0, 0, 0); // left up
+  await new Promise((r) => setTimeout(r, 250));
+}
 const cursorShowing = () => {
   const ci = { cbSize: koffi.sizeof(CURSORINFO), flags: 0, hCursor: 0, x: 0, y: 0 };
   GetCursorInfo(ci);
@@ -221,9 +231,17 @@ app.whenReady().then(async () => {
       assert.strictEqual(await js('document.body.classList.contains("peek")'), false);
     });
 
-    await test('fullscreen play bar: shows on mouse move, hides when still, stays while paused or the sidebar is out', async () => {
+    await test('fullscreen play bar: shows on mouse move, hides when still, stays while paused or the sidebar is out; real clicks work', async () => {
       const bar = () => BrowserWindow.getAllWindows().find((w) => /overlay\.html$/.test(w.webContents.getURL()));
-      assert(bar(), 'play bar window exists');
+      // "shown" = opaque: the bar window is never hidden, only faded and made click-through
+      const barShown = () => !!bar() && bar().isVisible() && bar().getOpacity() > 0.5;
+      /** Screen point at the middle of a button on the bar. */
+      const barButton = async (id) => {
+        const r = await bar().webContents.executeJavaScript(`(() => { const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+        const b = bar().getBounds();
+        return { x: Math.round(b.x + r.x), y: Math.round(b.y + r.y) };
+      };
+      await until(() => !!bar(), 3000, 'play bar window exists in fullscreen');
       const home = screen.getCursorScreenPoint();
       try {
         await js('api.cmd("play"); 0');
@@ -234,37 +252,48 @@ app.whenReady().then(async () => {
         SetCursorPos(cx, cy);
         await wait(150);
         SetCursorPos(cx + 20, cy + 10); // a real move
-        await until(() => bar().isVisible(), 2000, 'bar appears on mouse move');
+        await until(() => barShown(), 2000, 'bar appears on mouse move');
         const b = bar().getBounds();
         assert(b.y + b.height <= stage.y + stage.height && b.y > stage.y + stage.height / 2, 'at the bottom of the video');
         assert(b.x >= stage.x && b.x + b.width <= stage.x + stage.width, 'within the video');
-        await until(() => !bar().isVisible(), 5000, 'hides after a few still seconds while playing');
+        await until(() => !barShown(), 5000, 'fades after a few still seconds while playing');
 
         await js('api.cmd("pause"); 0');
-        await until(() => bar().isVisible(), 3000, 'paused: bar comes back');
+        await until(() => barShown(), 3000, 'paused: bar comes back');
         await wait(3500);
-        assert(bar().isVisible(), 'and stays while paused');
+        assert(barShown(), 'and stays while paused');
         snapshot('3-fullscreen-bar', win.getContentBounds());
         await js('api.cmd("play"); 0');
-        await until(() => !bar().isVisible(), 6000, 'hides again once playing');
+        await until(() => !barShown(), 6000, 'fades again once playing');
 
         win.webContents.send('cursor-x', 3); // sidebar slides in
         await until(() => js('document.body.classList.contains("peek")'), 2000, 'peek');
-        await until(() => bar().isVisible(), 2000, 'bar shows with the sidebar');
+        await until(() => barShown(), 2000, 'bar shows with the sidebar');
         await wait(1200);
         const side = await screenRect('#sidebar');
         assert(bar().getBounds().x >= side.x + side.width, 'bar follows the video, beside the sidebar');
         await wait(2500);
-        assert(bar().isVisible(), 'and stays while the sidebar is out');
+        assert(barShown(), 'and stays while the sidebar is out');
         win.webContents.send('cursor-x', 1500);
         await until(() => js('!document.body.classList.contains("peek")'), 3000, 'sidebar away');
 
-        // the bar's own buttons work
+        // REAL mouse clicks on the bar, after all the show / fade cycles above (v0.9.0's bar
+        // stopped receiving clicks after being hidden and shown; a DOM click didn't catch that)
         await js('api.cmd("pause"); 0');
-        await until(() => bar().isVisible(), 3000, 'bar up (paused)');
-        await bar().webContents.executeJavaScript('document.getElementById("playPause").click(); 0');
-        await until(() => js('!last.room.paused'), 3000, 'play on the bar plays the room');
-        await js('api.cmd("pause"); 0');
+        await until(() => barShown(), 3000, 'bar up (paused)');
+        await wait(1500); // the sidebar just slid away and the bar re-centres: aim once it has stopped moving
+        const play = await barButton('playPause');
+        await realClick(play.x, play.y);
+        await until(() => js('!last.room.paused'), 3000, 'a real click on play plays the room');
+        await realClick(play.x, play.y);
+        await until(() => js('last.room.paused'), 3000, 'and again pauses it');
+        const ex = await barButton('exitFs');
+        await realClick(ex.x, ex.y);
+        await until(() => js('!document.body.classList.contains("fullscreen")'), 4000, 'a real click on exit fullscreen');
+        await until(() => !bar(), 2000, 'bar window gone outside fullscreen');
+        await js('api.fullscreen(true); 0'); // back, for the tests that follow
+        await until(() => js('document.body.classList.contains("fullscreen")'), 5000, 'fullscreen again');
+        await wait(2500);
       } finally {
         SetCursorPos(home.x, home.y);
       }

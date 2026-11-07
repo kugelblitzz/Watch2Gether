@@ -157,6 +157,11 @@ exit the run).
 - **mpv `af-command`** on this build needs the filter target named explicitly:
   `af-command w2gduck volume 0.4 volume`.
 - **Electron 33 removed `File.path`**: dropped files go through `webUtils.getPathForFile` in preload.
+- **Never hide() / show() the fullscreen play bar window.** A non-focusable Electron window stops
+  receiving mouse clicks after a hide / show cycle (0 of 3 after a few cycles, measured), which left
+  every button on the bar dead in v0.9.0. The bar fades instead (`setOpacity` + `setIgnoreMouseEvents`)
+  and is created / destroyed when entering / leaving fullscreen. Test real input with real clicks
+  (`mouse_event`): a DOM `.click()` passed while real clicks failed.
 - **Tests that look for "the app window"** must pick the main window by its page (index.html):
   the fullscreen play bar is a second BrowserWindow.
 - **Screen captures in tests** (`CopyFromScreen`) can land mid-way through Windows' fullscreen
