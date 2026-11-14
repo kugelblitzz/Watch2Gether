@@ -386,6 +386,104 @@ const sampleReport = () => {
     assert.strictEqual(env.DB.rows.length, 0, 'older than a year is gone');
   });
 
+  console.log('stats page');
+
+  /** D1 on top of Node's built-in SQLite, with the real migration: the page's real SQL runs. */
+  function sqliteD1() {
+    let DatabaseSync;
+    try { ({ DatabaseSync } = require('node:sqlite')); } catch { return null; }
+    const db = new DatabaseSync(':memory:');
+    db.exec(fs.readFileSync(path.join(__dirname, '..', 'telemetry-worker', 'migrations', '0001_reports.sql'), 'utf8'));
+    const stmt = (sql, args = []) => ({
+      bind: (...a) => stmt(sql, a),
+      async all() { return { results: db.prepare(sql).all(...args).map((r) => ({ ...r })) }; },
+      async first() { const r = db.prepare(sql).get(...args); return r ? { ...r } : null; },
+      async run() { return { meta: { changes: db.prepare(sql).run(...args).changes } }; },
+    });
+    return { prepare: (sql) => stmt(sql), async batch(list) { return Promise.all(list.map((s) => s.run())); } };
+  }
+  const stats = await import('../telemetry-worker/src/stats.js');
+  const { PAGE_JS } = await import('../telemetry-worker/src/stats-page.js');
+  const PASSWORD = 'correct horse battery';
+  const basic = (pw) => ({ Authorization: 'Basic ' + Buffer.from('anyone:' + pw).toString('base64') });
+  const get = (p, headers = {}) => new Request('https://telemetry.example' + p, { headers });
+
+  await test('the page script is valid JavaScript (it lives inside a template string)', () => {
+    new Function(PAGE_JS); // eslint-disable-line no-new-func
+    assert(!PAGE_JS.includes('${'), 'no interpolation slipped in');
+  });
+
+  await test('stats page: no password set -> not set up; asks for the password; wrong one refused', async () => {
+    const db = sqliteD1() || fakeD1();
+    let r = await worker.handle(get('/stats'), { DB: db });
+    assert.strictEqual(r.status, 503);
+    r = await worker.handle(get('/stats'), { DB: db, STATS_PASSWORD: 'short' });
+    assert.strictEqual(r.status, 503, 'a short password is refused, not used');
+    const env = { DB: db, STATS_PASSWORD: PASSWORD };
+    r = await worker.handle(get('/stats'), env);
+    assert.strictEqual(r.status, 401);
+    assert.match(r.headers.get('WWW-Authenticate'), /^Basic realm="Watch2Gether stats"/);
+    assert.strictEqual((await worker.handle(get('/stats', basic('nope')), env)).status, 401);
+    assert.strictEqual((await worker.handle(get('/stats/api', basic('nope')), env)).status, 401, 'the data too');
+    assert.strictEqual((await worker.handle(get('/stats', { Authorization: 'Basic !!!' }), env)).status, 401);
+  });
+
+  await test('stats page: right password -> page, script and data; strict security headers', async () => {
+    const env = { DB: sqliteD1() || fakeD1(), STATS_PASSWORD: PASSWORD };
+    const page = await worker.handle(get('/stats', basic(PASSWORD)), env);
+    assert.strictEqual(page.status, 200);
+    assert.match(page.headers.get('Content-Type'), /text\/html/);
+    assert.match(page.headers.get('Content-Security-Policy'), /default-src 'none'; script-src 'self'/);
+    assert.strictEqual(page.headers.get('Cache-Control'), 'no-store');
+    assert.match(await page.text(), /<script src="\/stats\/app.js"/);
+    const js = await worker.handle(get('/stats/app.js', basic(PASSWORD)), env);
+    assert.match(js.headers.get('Content-Type'), /javascript/);
+    const nope = await worker.handle(new Request('https://telemetry.example/stats', { method: 'POST', headers: basic(PASSWORD) }), env);
+    assert.strictEqual(nope.status, 405);
+  });
+
+  await test('stats page: login attempts are capped (limiter says no -> 429, even with the right password)', async () => {
+    const env = { DB: fakeD1(), STATS_PASSWORD: PASSWORD, LOGIN_LIMITER: { limit: async ({ key }) => ({ success: key !== 'stats-login' }) } };
+    assert.strictEqual((await worker.handle(get('/stats', basic(PASSWORD)), env)).status, 429);
+    assert.strictEqual((await worker.handle(get('/stats'), env)).status, 401, 'no attempt made, nothing counted');
+  });
+
+  const sdb = sqliteD1();
+  if (!sdb) {
+    console.log('  skip stats numbers (this Node has no node:sqlite)');
+  } else {
+    await test('stats numbers from real SQL: totals, formats split by CPU/GPU, causes, days, CPU GPUs, latest', async () => {
+      const env = { DB: sdb, STATS_PASSWORD: PASSWORD };
+      const rep = (o) => ({ v: 1, app: '0.10.0', role: 'guest', source: 'stream', video: { codec: 'av1', height: 2160 }, decode: { hwdec: 'no' }, machine: { gpu: 'GTX 1060 (10de:1c03)' }, sync: { watchSec: 600, stallSec: 60, stalls: { decode: 4, network: 0, seek: 1, load: 1 } }, ...o });
+      const a = '0b9c3f0e-8f6a-4d2b-9c1e-2a7d5e6f8a90';
+      const b = '1c9c3f0e-8f6a-4d2b-9c1e-2a7d5e6f8a91';
+      await worker.handle(req('POST', '/v1/report', { installId: a, reports: [rep(), rep()] }), env);
+      await worker.handle(req('POST', '/v1/report', { installId: b, reports: [rep({ video: { codec: 'av1', height: 2160 }, decode: { hwdec: 'd3d11va' }, machine: { gpu: 'RTX 4070' }, sync: { watchSec: 1200, stallSec: 6, stalls: { network: 2 } } })] }), env);
+      // an old report, outside a 30-day range
+      await sdb.prepare('UPDATE reports SET received_at = ? WHERE id = 1').bind(Date.now() - 40 * 86400000).run();
+
+      const res = await worker.handle(get('/stats/api?days=30', basic(PASSWORD)), env);
+      assert.strictEqual(res.status, 200);
+      const d = await res.json();
+      assert.strictEqual(d.days, 30);
+      assert.deepStrictEqual(d.totals, { videos: 2, installs: 2, watch_sec: 1800, stall_sec: 66 });
+      const cpu = d.byFormat.find((f) => f.codec === 'av1' && f.cpu === 1);
+      const gpu = d.byFormat.find((f) => f.codec === 'av1' && f.cpu === 0);
+      assert.deepStrictEqual([cpu.videos, cpu.stall_sec, cpu.decode_stalls], [1, 60, 4]);
+      assert.deepStrictEqual([gpu.videos, gpu.stall_sec, gpu.network_stalls], [1, 6, 2]);
+      assert.deepStrictEqual(d.causes, { network: 2, decode: 4, seek: 1, load: 1, align: 0, other: 0 });
+      assert.strictEqual(d.perDay.reduce((s, x) => s + x.videos, 0), 2);
+      assert.deepStrictEqual(d.cpuGpus.map((g) => [g.gpu, g.codec, g.height, g.videos]), [['GTX 1060 (10de:1c03)', 'av1', 2160, 1]]);
+      assert.strictEqual(d.latest.length, 2);
+      assert(d.latest[0].received_at >= d.latest[1].received_at, 'newest first');
+
+      const year = await (await worker.handle(get('/stats/api?days=365', basic(PASSWORD)), env)).json();
+      assert.strictEqual(year.totals.videos, 3, 'the old one is inside a year');
+      const odd = await (await worker.handle(get('/stats/api?days=9999', basic(PASSWORD)), env)).json();
+      assert.strictEqual(odd.days, 30, 'unknown ranges fall back to 30 days');
+    });
+  }
+
   fs.rmSync(dir, { recursive: true, force: true });
   console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`);
 })();

@@ -95,7 +95,13 @@ crash from that once hid the status badges).
 - Endpoint: `https://telemetry.w2g-stats.workers.dev` (`ENDPOINT` in telemetry.js). Deploy from
   `telemetry-worker/` with `npx wrangler@4 deploy` (needs `CLOUDFLARE_API_TOKEN` with Workers +
   D1 edit). The Worker is not deployed by CI.
-- Look at the data: D1 console in the Cloudflare dashboard, or
+- Stats page: https://telemetry.w2g-stats.workers.dev/stats (HTTP Basic auth, any user name,
+  password = the `STATS_PASSWORD` Worker secret, 12+ characters, set with
+  `npx wrangler@4 secret put STATS_PASSWORD`). `src/stats.js` (auth + SQL), `src/stats-page.js`
+  (page; its script is a raw template string, so no backticks or dollar-brace inside). Login
+  attempts are capped by the `LOGIN_LIMITER` binding keyed by a constant, not by IP. Tests run the
+  page's SQL on node:sqlite with the real migration (test/telemetry.test.js).
+- Look at the data: the stats page, the D1 console in the Cloudflare dashboard, or
   `npx wrangler@4 d1 execute w2g-stats --remote --command "SELECT codec, hwdec, COUNT(*), SUM(stalls_decode), SUM(stalls_network) FROM reports GROUP BY 1, 2"`.
 
 ## Commands

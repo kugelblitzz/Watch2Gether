@@ -16,6 +16,13 @@ database_name = "w2g-stats"
 database_id = "e3456e74-279b-470b-ae6d-bc2d9918d1f1"
 migrations_dir = "migrations"
 
+# Stats page password: npx wrangler@4 secret put STATS_PASSWORD   (12+ characters; see src/stats.js)
+# Caps login attempts on /stats for everyone together (keyed by a constant, not by IP).
+[[ratelimits]]
+name = "LOGIN_LIMITER"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
 # Daily: delete reports older than a year (src/index.js RETENTION_DAYS).
 [triggers]
 crons = ["17 3 * * *"]

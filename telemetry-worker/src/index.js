@@ -3,11 +3,13 @@
 //   POST   /v1/report           { installId, reports: [...] }  -> stores sanitized rows
 //   DELETE /v1/install/<id>      deletes everything stored for that install ("Delete my data")
 //   GET    /v1/health
+//   GET    /stats...            password-protected stats page (stats.js)
 //
 // No IP addresses are stored or logged: the request's address and headers are never read,
 // and Workers logs are off (wrangler.toml). Reports older than RETENTION_DAYS are deleted daily.
 
 import { validateBatch, isInstallId, COLUMNS, MAX_BODY_BYTES } from './validate.js';
+import { handleStats } from './stats.js';
 
 const RETENTION_DAYS = 365;
 const MAX_REPORTS_PER_DAY = 300; // per install; a real viewer sends a handful
@@ -56,6 +58,9 @@ export async function handle(request, env) {
     const r = await env.DB.prepare('DELETE FROM reports WHERE install_id = ?').bind(del[1].toLowerCase()).run();
     return json({ ok: true, deleted: (r && r.meta && r.meta.changes) || 0 });
   }
+
+  const stats = await handleStats(request, env);
+  if (stats) return stats;
 
   return json({ error: 'Not found' }, 404);
 }

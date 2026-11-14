@@ -74,7 +74,7 @@ The app asks once whether it may send a short report after each video you watch 
 - **What's sent:** the video's format (codec, resolution, frame rate, HDR, bitrate, length), whether the graphics card decoded it, how often playback stalled and why (network, seeking, PC too slow), dropped frames, ping and download speed to the host, the number of people in the lobby, your GPU, CPU, RAM, Windows and app versions, and a random id for your PC.
 - **Never sent:** file names or paths, your name, chat, voice, room codes or invites, and IP addresses. The stats server doesn't log or store addresses.
 - **See exactly what's sent** shows the actual report. **Delete my data** erases everything stored for your PC and gives it a new random id.
-- Reports are kept for a year. They go to a small Cloudflare Worker ([telemetry-worker/](telemetry-worker/)) that stores them in a Cloudflare D1 database.
+- Reports are kept for a year. They go to a small Cloudflare Worker ([telemetry-worker/](telemetry-worker/)) that stores them in a Cloudflare D1 database. Only the maintainer can see them, on a password-protected stats page.
 
 ## Bandwidth (the one thing to check)
 
