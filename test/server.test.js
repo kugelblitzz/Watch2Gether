@@ -731,6 +731,66 @@ async function test(name, fn) {
     uh.stop(); ug.stop(); us.stop();
   });
 
+  await test("a PC that can't decode fast enough is told so, the room sees why, and the report says so", async () => {
+    const sp = port + 15;
+    const ss = new HostServer({ port: sp });
+    await ss.start();
+    ss.setMedia(file);
+    const before = FakeMpv.instances.length;
+    const sh = new Session({ baseUrl: `http://127.0.0.1:${sp}`, code: ss.code, name: 'H', hostToken: ss.hostToken, mpvPath: 'fake', resolveLocal: () => file });
+    const sg = new Session({ baseUrl: `http://127.0.0.1:${sp}`, code: ss.code, name: 'Slow', mpvPath: 'fake' });
+    sg.statsSampleMs = 100;
+    const reports = [];
+    sg.on('playback-report', (r) => reports.push(r));
+    await sh.start();
+    const gStart = sg.start();
+    await until(() => FakeMpv.instances.length === before + 2, 2000, 'guest player created');
+    const gp = FakeMpv.instances[before + 1];
+    // a 4K HDR AV1 file the GPU doesn't decode
+    Object.assign(gp.props, {
+      'video-format': 'av1',
+      'video-params': { w: 3840, h: 2160, pixelformat: 'yuv420p10', gamma: 'pq' },
+      'container-fps': 23.976,
+      'file-format': 'matroska,webm',
+      'mpv-version': 'mpv v0.41.0',
+      'frame-drop-count': 0,
+      'decoder-frame-drop-count': 0,
+      avsync: 0,
+    });
+    await gStart;
+    await until(() => gp.loaded && !sg.loading && sg.pstats, 2000, 'guest loaded');
+    gp._setProp('hwdec-current', 'no');
+    sg.pstats.minWatchSec = 0;
+    ss._apply({ name: 'H' }, 'play');
+    await until(() => !gp.props.pause, 2000, 'guest playing');
+
+    const dropper = setInterval(() => { gp.props['frame-drop-count'] += 10; }, 50); // ~200 dropped frames / s
+    try {
+      await until(() => sg.decodeSlow, 6000, 'guest notices it is too slow (after the 3 s settle time)');
+      await until(() => ss._membersMsg().list.some((m) => m.name === 'Slow' && m.decodeSlow), 3000, 'room knows');
+    } finally {
+      clearInterval(dropper);
+    }
+    assert(sg.log.some((l) => /graphics card isn't decoding this AV1 2160p/.test(l.text)), 'warned about CPU decoding');
+    assert(sg.log.some((l) => /can't decode this AV1 2160p video fast enough/.test(l.text)), 'warned that it can\'t keep up');
+    assert(gp.props.speed <= 1, 'not sped up while the decoder struggles');
+
+    sg.stop();
+    assert.strictEqual(reports.length, 1, 'one report when the session ends');
+    const r = reports[0];
+    assert.strictEqual(r.role, 'guest');
+    assert.strictEqual(r.source, 'stream');
+    assert.deepStrictEqual(
+      { codec: r.video.codec, w: r.video.width, h: r.video.height, depth: r.video.bitDepth, hdr: r.video.hdr, c: r.video.container },
+      { codec: 'av1', w: 3840, h: 2160, depth: 10, hdr: 'pq', c: 'mkv' });
+    assert.strictEqual(r.decode.hwdec, 'no');
+    assert(r.decode.droppedFrames > 0, 'dropped frames counted');
+    assert.strictEqual(r.mpv, 'mpv v0.41.0');
+    const json = JSON.stringify(r);
+    assert(!/movie|\.mkv|\\|\//i.test(json.replace(/"container":"mkv"/, '')), 'no file name or path in the report: ' + json);
+    sh.stop(); ss.stop();
+  });
+
   await test('host changes video -> everyone reloads, paused at 0', async () => {
     const file2 = path.join(dir, 'other.mp4');
     fs.writeFileSync(file2, data.subarray(0, 1000));

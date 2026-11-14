@@ -1,0 +1,21 @@
+# Deploy:   npx wrangler@4 deploy                (from this folder)
+# Schema:   npx wrangler@4 d1 migrations apply w2g-stats --remote
+# Query:    npx wrangler@4 d1 execute w2g-stats --remote --command "SELECT ..."  (or the D1 console in the dashboard)
+name = "telemetry"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+# Request logs would hold IP addresses; we promise not to keep those.
+[observability]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "w2g-stats"
+database_id = "e3456e74-279b-470b-ae6d-bc2d9918d1f1"
+migrations_dir = "migrations"
+
+# Daily: delete reports older than a year (src/index.js RETENTION_DAYS).
+[triggers]
+crons = ["17 3 * * *"]

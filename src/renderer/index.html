@@ -80,6 +80,10 @@
         </div>
       </div>
       <div id="homeError" class="error hidden"></div>
+      <div class="home-foot muted small">
+        <span id="statsLine">Anonymous playback stats: off</span>
+        <button id="statsChange" class="link-btn small">Change</button>
+      </div>
     </section>
 
     <!-- LOBBY: Discord-style. Sidebar on the left, the movie on the right. -->
@@ -221,6 +225,28 @@
       </header>
       <div id="whatsNewBody" class="whats-new-body"></div>
       <div class="sheet-foot"><button id="whatsNewOk" class="primary">Got it</button></div>
+    </div>
+  </div>
+
+  <!-- anonymous playback stats: asked once, changeable from the home screen -->
+  <div id="statsSheet" class="modal hidden" role="dialog" aria-label="Playback stats">
+    <div class="sheet stats-sheet">
+      <header class="sheet-head">
+        <h2>Help make playback smoother?</h2>
+        <button id="statsClose" class="icon-btn" aria-label="Close">×</button>
+      </header>
+      <p>Send anonymous playback stats after each video: the video's format (for example AV1, 4K), whether your graphics card decoded it, your GPU and CPU model, and how often playback stalled and why.</p>
+      <p class="muted small">Never sent: file names, your name, chat, voice, room codes or your IP address. Each PC gets a random id, and "Delete my data" erases everything stored for it.</p>
+      <div class="stats-actions">
+        <button id="statsPreviewBtn" class="small">See exactly what's sent</button>
+        <button id="statsDeleteBtn" class="small hidden">Delete my data</button>
+        <span id="statsMsg" class="muted small"></span>
+      </div>
+      <pre id="statsPreview" class="stats-preview hidden"></pre>
+      <div class="sheet-foot">
+        <button id="statsNo">No thanks</button>
+        <button id="statsYes" class="primary">Yes, send stats</button>
+      </div>
     </div>
   </div>
 

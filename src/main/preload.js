@@ -49,4 +49,8 @@ contextBridge.exposeInMainWorld('w2g', {
   toggleSidebar: () => ipcRenderer.invoke('window:toggleSidebar'),
   onVoiceAudio: (cb) => ipcRenderer.on('voice-audio', (_e, bytes) => cb(bytes)),
   onEnded: (cb) => ipcRenderer.on('ended', (_e, reason) => cb(reason)),
+  statsStatus: () => ipcRenderer.invoke('stats:status'),
+  statsConsent: (yes) => ipcRenderer.invoke('stats:consent', yes),
+  statsPreview: () => ipcRenderer.invoke('stats:preview'),
+  statsDelete: () => ipcRenderer.invoke('stats:delete'),
 });

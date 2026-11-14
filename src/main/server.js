@@ -329,6 +329,7 @@ class HostServer extends EventEmitter {
         drift: c.drift,
         source: c.source,
         rtt: c.rtt,
+        decodeSlow: !!c.decodeSlow,
         voice: c.voice && { muted: c.voice.muted, deafened: c.voice.deafened, serverMuted: c.voice.serverMuted },
       }));
     return { type: 'members', list, stats: { uploadMbps: this.uploadMbps, viewers: list.filter((c) => !c.isHost).length } };
@@ -494,6 +495,7 @@ class HostServer extends EventEmitter {
         if (typeof msg.drift === 'number' && Number.isFinite(msg.drift)) client.drift = Math.round(msg.drift * 1000) / 1000;
         if (msg.source === 'local' || msg.source === 'stream') client.source = msg.source;
         if (typeof msg.rtt === 'number') client.rtt = Math.round(msg.rtt);
+        if (typeof msg.slow === 'boolean') client.decodeSlow = msg.slow; // their PC can't decode fast enough
         this.membersDirty = true;
         if (typeof msg.buffering === 'boolean') this._setBuffering(client, msg.buffering);
         break;

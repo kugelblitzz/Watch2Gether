@@ -4,6 +4,15 @@ What changed in each version, for people using the app. The release workflow cop
 section for the version being released into the GitHub release notes, so write each entry
 for a user, not a developer.
 
+## 0.10.0
+
+**New**
+- **Tells you when your PC is the problem, not the internet.** Some videos (often AV1 or 4K HEVC) need the graphics card to play smoothly. If your PC is decoding one without it, or can't keep up, you'll see a message on the video and in Activity. Everyone else sees "Waiting for Sam (their PC can't decode this video fast enough)" instead of "buffering", and "PC can't keep up" next to your name.
+- **Anonymous playback stats (optional, off unless you say yes).** The app asks once whether it may send a short report after each video: the video's format, whether your graphics card decoded it, your GPU and CPU model, and how often playback stalled and why. This shows which videos and PCs have trouble, so it can be fixed. File names, your name, chat, voice, room codes and IP addresses are never sent. **See exactly what's sent** shows the report itself, and **Delete my data** erases everything stored for your PC. Change your answer any time with "Change" at the bottom of the home screen.
+
+**Improved**
+- A player that can't decode fast enough is no longer sped up to catch up with the others (that only made it fall further behind).
+
 ## 0.9.3
 
 **New**

@@ -658,3 +658,17 @@ body.dropping::after {
 .whats-new-body li { margin: 5px 0; line-height: 1.45; }
 .whats-new-body p { margin: 6px 0; }
 .sheet-foot { display: flex; justify-content: flex-end; margin-top: 18px; }
+
+/* anonymous playback stats */
+.stats-sheet { width: min(560px, 100%); }
+.stats-sheet p { margin: 0 0 10px; line-height: 1.5; }
+.stats-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.stats-preview {
+  margin: 12px 0 0; padding: 12px 14px; max-height: 260px; overflow: auto;
+  background: rgba(0, 0, 0, .35); border: 1px solid var(--hairline-2); border-radius: 12px;
+  font: 12px/1.5 Consolas, "Cascadia Mono", monospace; color: var(--text); white-space: pre; user-select: text;
+}
+.sheet-foot { gap: 10px; }
+.home-foot { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 28px; }
+.link-btn { background: none; border: none; padding: 2px 4px; color: var(--accent, #0a84ff); cursor: pointer; }
+.link-btn:hover { text-decoration: underline; background: none; }

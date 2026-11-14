@@ -625,10 +625,94 @@ function showWhatsNew(info) {
   }
   $('whatsNew').classList.remove('hidden');
 }
-const closeWhatsNew = () => $('whatsNew').classList.add('hidden');
+const closeWhatsNew = () => {
+  $('whatsNew').classList.add('hidden');
+  if (statsAskPending) setTimeout(askStatsIfNeeded, 400); // one dialog at a time
+};
 $('whatsNewClose').addEventListener('click', closeWhatsNew);
 $('whatsNewOk').addEventListener('click', closeWhatsNew);
 $('whatsNew').addEventListener('click', (e) => { if (e.target === $('whatsNew')) closeWhatsNew(); });
+
+// ---------- anonymous playback stats (opt-in) ----------
+
+let statsState = null;
+let statsAskPending = false;
+
+function paintStatsLine() {
+  const on = statsState && statsState.consent === 'yes';
+  $('statsLine').textContent = `Anonymous playback stats: ${on ? 'on' : 'off'}`;
+}
+
+async function openStats() {
+  statsState = await api.statsStatus();
+  const on = statsState.consent === 'yes';
+  $('statsPreview').classList.add('hidden');
+  $('statsPreviewBtn').textContent = "See exactly what's sent";
+  $('statsMsg').textContent = '';
+  $('statsDeleteBtn').classList.toggle('hidden', statsState.consent == null); // nothing stored before a choice
+  $('statsYes').textContent = on ? 'Keep sending' : 'Yes, send stats';
+  $('statsNo').textContent = on ? 'Turn off' : 'No thanks';
+  $('statsSheet').classList.remove('hidden');
+}
+
+/** Asked once, on the home screen, never over a dialog or in the middle of a movie. */
+function askStatsIfNeeded() {
+  statsAskPending = false;
+  if (!statsState || statsState.consent != null || lobby) return;
+  if (document.querySelector('.modal:not(.hidden)')) {
+    statsAskPending = true; // e.g. What's new is open: ask when it closes
+    return;
+  }
+  openStats();
+}
+
+async function decideStats(yes) {
+  try {
+    statsState = await api.statsConsent(yes);
+    $('statsSheet').classList.add('hidden');
+    paintStatsLine();
+  } catch (e) {
+    $('statsMsg').textContent = cleanError(e);
+  }
+}
+
+$('statsYes').addEventListener('click', () => decideStats(true));
+$('statsNo').addEventListener('click', () => decideStats(false));
+$('statsChange').addEventListener('click', openStats);
+// closing without choosing isn't a "no": they're asked again next time the app starts
+$('statsClose').addEventListener('click', () => $('statsSheet').classList.add('hidden'));
+$('statsSheet').addEventListener('click', (e) => { if (e.target === $('statsSheet')) $('statsSheet').classList.add('hidden'); });
+
+$('statsPreviewBtn').addEventListener('click', async () => {
+  const pre = $('statsPreview');
+  if (!pre.classList.contains('hidden')) {
+    pre.classList.add('hidden');
+    $('statsPreviewBtn').textContent = "See exactly what's sent";
+    return;
+  }
+  const p = await api.statsPreview();
+  if (!p) return;
+  $('statsMsg').textContent = p.example
+    ? 'Example with made-up playback numbers, and the details of this PC as they would be sent.'
+    : 'Your last report.';
+  pre.textContent = JSON.stringify(p.report, null, 2);
+  pre.classList.remove('hidden');
+  $('statsPreviewBtn').textContent = 'Hide';
+});
+
+$('statsDeleteBtn').addEventListener('click', async () => {
+  if (!confirm('Delete every stats report this PC has sent? This PC also gets a new random id.')) return;
+  const b = $('statsDeleteBtn');
+  b.disabled = true;
+  try {
+    statsState = await api.statsDelete();
+    $('statsMsg').textContent = 'Deleted. This PC now has a new random id.';
+  } catch (e) {
+    $('statsMsg').textContent = cleanError(e);
+  } finally {
+    b.disabled = false;
+  }
+});
 
 // ---------- back into the lobby after "Restart to update" ----------
 
@@ -736,7 +820,10 @@ function render(u) {
     text = 'Your player window is closed.';
     status.classList.add('warn');
   } else if (r && r.waiting) {
-    text = `Waiting for ${r.waitingFor.join(', ')} to buffer…`;
+    // someone whose PC can't decode fast enough isn't helped by a better connection: say so
+    const slow = new Set((u.members || []).filter((m) => m.decodeSlow).map((m) => m.name));
+    const who = r.waitingFor.map((n) => (slow.has(n) ? `${n} (their PC can't decode this video fast enough)` : n));
+    text = `Waiting for ${who.join(', ')}${who.some((w, i) => w === r.waitingFor[i]) ? ' to buffer' : ''}…`;
     status.classList.add('warn');
   } else if (u.player.buffering) {
     text = 'Buffering…';
@@ -790,7 +877,7 @@ function renderMembers(u, media, dur) {
     if (m.isHost) tags.push(el('span', { class: 'tag host', text: 'host' }));
     if (m.id === u.me) tags.push(el('span', { class: 'tag', text: 'you' }));
     if (!m.isHost && m.source === 'local') tags.push(el('span', { class: 'tag', text: 'local copy' }));
-    const detail = m.lagging ? 'behind' : m.buffering ? 'buffering' : (m.rtt != null && !m.isHost ? `${m.rtt} ms` : '');
+    const detail = m.decodeSlow ? "PC can't keep up" : m.lagging ? 'behind' : m.buffering ? 'buffering' : (m.rtt != null && !m.isHost ? `${m.rtt} ms` : '');
     const avatar = el('span', { class: 'avatar ' + avatarColor(m.name), text: initials(m.name) }, el('span', { class: dotClass }));
     const li = el('li', {},
       avatar,
@@ -849,4 +936,7 @@ function renderLog(log) {
   await refreshEnv();
   await resumeAfterUpdate();
   showWhatsNew(await api.whatsNew());
+  statsState = await api.statsStatus();
+  paintStatsLine();
+  askStatsIfNeeded();
 })();

@@ -67,6 +67,15 @@ The app checks GitHub for a new release when it starts, every 30 minutes, and ri
 
 After an update, a short **What's new** shows what changed (from [CHANGELOG.md](CHANGELOG.md)).
 
+## Anonymous playback stats (optional)
+
+The app asks once whether it may send a short report after each video you watch for at least 30 seconds. It's **off unless you say yes**, and you can change your answer with **Change** at the bottom of the home screen.
+
+- **What's sent:** the video's format (codec, resolution, frame rate, HDR, bitrate, length), whether the graphics card decoded it, how often playback stalled and why (network, seeking, PC too slow), dropped frames, ping and download speed to the host, the number of people in the lobby, your GPU, CPU, RAM, Windows and app versions, and a random id for your PC.
+- **Never sent:** file names or paths, your name, chat, voice, room codes or invites, and IP addresses. The stats server doesn't log or store addresses.
+- **See exactly what's sent** shows the actual report. **Delete my data** erases everything stored for your PC and gives it a new random id.
+- Reports are kept for a year. They go to a small Cloudflare Worker ([telemetry-worker/](telemetry-worker/)) that stores them in a Cloudflare D1 database.
+
 ## Bandwidth (the one thing to check)
 
 Each streaming friend pulls the file's bitrate from the host's **upload** connection:
@@ -86,6 +95,7 @@ The lobby shows the file's average bitrate, the upload it needs and the actual u
 - **"The host refused the connection"**
   - The room code is wrong, or you aren't connecting through a `100.x.y.z` Tailscale address.
   - LAN connections are off by default. The host can turn them on under *Advanced*.
+- **"Your PC can't decode this video fast enough"**: the problem is the PC, not the internet, so a faster connection or a local copy won't help. Some formats (AV1 especially, also 4K HEVC or VP9) need the graphics card to decode them, and older graphics cards can't. A copy of the video in another format, such as H.264, plays smoothly.
 - **Stuttering:** run `tailscale status` and check whether the friend's line says `relay`. If it does, Tailscale couldn't make a direct connection and the bandwidth is limited. Restarting Tailscale or the router often fixes it. Some networks can't connect directly (CGNAT on both sides), and local-copy mode is the fallback for those.
 
 ## Contributing

@@ -29,6 +29,8 @@ src/main/            Electron main process (Node)
   changelog.js       reads CHANGELOG.md sections (What's new + release notes)
   env.js             finds Tailscale and mpv, installs mpv via winget
   util.js            small pure helpers (invite parsing, address filters, cursor math)
+  playstats.js       PlaybackStats: one viewer's playback of one video (format, hwdec, drops, stalls by cause)
+  telemetry.js       opt-in anonymous stats: consent, local queue (userData/stats-queue.jsonl), upload
   preload.js         the only bridge to the page: window.w2g API (contextIsolation, sandbox)
 src/renderer/        the page (no bundler, classic <script>s sharing globals)
   index.html         all markup; CSP: script-src 'self' 'wasm-unsafe-eval'
@@ -41,6 +43,7 @@ src/renderer/        the page (no bundler, classic <script>s sharing globals)
 test/                see "Tests"
 scripts/             start.js (dev launcher), release-notes.js (CI)
 .github/workflows/release.yml   build + test + publish on push to main
+telemetry-worker/    Cloudflare Worker + D1 schema receiving the stats (deployed by hand, see "Stats")
 ```
 
 Script load order in `index.html` is `voice.js`, `app.js`, `voice-ui.js`. They share globals
@@ -52,7 +55,7 @@ crash from that once hid the status badges).
 
 - **Room protocol** (JSON over `ws://host:8787/ws?k=CODE`): `hello` -> `welcome {clientId, state, members}`;
   `state {paused, position, updatedAt, waiting, waitingFor, media}`; `cmd {action: play|pause|seek, position}`;
-  `status {buffering, drift, source, rtt}`; `ping`/`pong` (clock sync, every 2 s); `chat`; `event`;
+  `status {buffering, drift, source, rtt, slow}` (`slow`: this PC can't decode fast enough); `ping`/`pong` (clock sync, every 2 s); `chat`; `event`;
   `media-info {duration}`; voice control `voice-join|leave|state|mod|peers|peer-joined|peer-left|kicked`.
 - **Room clock** (server.js): `current = position + (now - updatedAt)` while playing and nobody is
   buffering. Call `_rebase()` before anything that changes the effective play state.
@@ -69,6 +72,31 @@ crash from that once hid the status badges).
 - **Resume after update**: before "Restart to update", main saves the lobby (host: code, token,
   video id, position; guest: invite) + voice state in settings; the new version restores it once,
   within 15 minutes.
+- **Decoder too slow vs. network**: a PC that can't decode a video (AV1 / 4K HEVC without GPU
+  decoding) drops frames, falls > 1.5 s behind, gets seeked forward, and that seek looks exactly
+  like buffering (real mpv, 4K60 AV1 on one CPU thread: ~10 s "buffering" per jump, network idle).
+  Every 2 s playstats.js judges three signs: falling behind the room clock over the current
+  uninterrupted stretch of playback (> 0.1 s/s; the strongest), dropped frames (only when nothing
+  happened just before, allowing for the catch-up speed-up: 1.08x on 60 fps must drop ~5/s), and
+  `avsync`. 2 slow readings, or 1 followed by a forced jump forward, set `decodeSlow` (~3.5 s on the
+  test above), which warns the user, tells the room (`status.slow`), stops speeding the player up,
+  and tags the stall cause `decode`. Judging drops right after resumes falsely flagged a fast host;
+  judging only whole sample intervals took 19 s to notice. Test with real mpv by forcing the guest
+  to `--hwdec=no --vd-lavc-threads=1` on a grainy 4K60 AV1 clip (encode with `--ovc=av1_nvenc`).
+
+## Stats (opt-in, anonymous)
+
+- Consent lives in settings (`stats: {consent: 'yes'|'no', installId}`); nothing is queued or sent
+  without `'yes'`. A report is built per video (>= 30 s watched) when the video changes, is
+  unloaded, or the lobby is left (`session.finishStats()` runs before listeners are removed).
+- Never add file names, paths, user names, chat, room codes or IPs to a report. The Worker
+  whitelists columns (`telemetry-worker/src/validate.js`), so a new field needs a column there, a
+  migration in `telemetry-worker/migrations/`, and `wrangler d1 migrations apply w2g-stats --remote`.
+- Endpoint: `https://telemetry.w2g-stats.workers.dev` (`ENDPOINT` in telemetry.js). Deploy from
+  `telemetry-worker/` with `npx wrangler@4 deploy` (needs `CLOUDFLARE_API_TOKEN` with Workers +
+  D1 edit). The Worker is not deployed by CI.
+- Look at the data: D1 console in the Cloudflare dashboard, or
+  `npx wrangler@4 d1 execute w2g-stats --remote --command "SELECT codec, hwdec, COUNT(*), SUM(stalls_decode), SUM(stalls_network) FROM reports GROUP BY 1, 2"`.
 
 ## Commands
 
@@ -95,6 +123,7 @@ sample); it generates one into %TEMP%.
 | You changed | Run |
 |---|---|
 | server.js, session.js, util.js, mpv.js | `npm test` (+ `test:app` if it touches the player or lobby flow) |
+| playstats.js, telemetry.js, telemetry-worker/ | `npm test` (test/telemetry.test.js); redeploy the Worker if it changed |
 | updater.js | `npm test` |
 | hotkeys.js | `npm test` and `test:hotkeys-real` |
 | overlay.js / overlay.* (fullscreen play bar) | `test:app` |

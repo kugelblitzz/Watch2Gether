@@ -151,6 +151,22 @@ app.whenReady().then(async () => {
       assert.deepStrictEqual(pageErrors, []);
     });
 
+    await test('a fresh install asks once about anonymous stats; "No thanks" is remembered', async () => {
+      await until(() => js('!document.getElementById("statsSheet").classList.contains("hidden")'), 5000, 'stats question');
+      await js(`document.getElementById('statsPreviewBtn').click(); 0`);
+      await until(() => js('!document.getElementById("statsPreview").classList.contains("hidden")'), 3000, 'preview');
+      const preview = JSON.parse(await js('document.getElementById("statsPreview").textContent'));
+      assert(preview.machine && preview.video && preview.sync, 'shows the report that would be sent');
+      await js(`document.getElementById('statsNo').click(); 0`);
+      await until(() => js('document.getElementById("statsSheet").classList.contains("hidden")'), 3000, 'closed');
+      assert.match(await js('document.getElementById("statsLine").textContent'), /: off$/);
+      win.webContents.reload();
+      await until(() => !win.webContents.isLoading(), 10000, 'page reloaded');
+      await until(() => js('document.querySelectorAll("#envBadges .badge").length >= 2'), 15000, 'badges again');
+      await wait(1500);
+      assert.strictEqual(await js('document.getElementById("statsSheet").classList.contains("hidden")'), true, 'not asked again');
+    });
+
     await test('host an empty lobby: no video window, a message on the stage', async () => {
       await js(`document.getElementById('name').value = 'Tester'; document.getElementById('hostBtn').click(); 0`);
       await until(() => js('!!lobby && !document.getElementById("screen-lobby").classList.contains("hidden")'), 10000, 'lobby');

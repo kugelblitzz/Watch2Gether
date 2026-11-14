@@ -10,6 +10,14 @@ const { EventEmitter } = require('events');
 const WebSocket = require('ws');
 const { Mpv } = require('./mpv');
 const { clamp } = require('./util');
+const { PlaybackStats, isHeavyVideo } = require('./playstats');
+
+const STATS_SAMPLE_MS = 2000;
+// Frame drops just after a seek, resume or load say nothing about the decoder: only judge an
+// interval that started at least this long after the last one.
+const SETTLE_MS = 1000;
+// A stretch of playback for measuring "falling behind" starts this long after a seek / resume.
+const SEGMENT_SETTLE_MS = 300;
 
 const SYNC_INTERVAL_MS = 250;
 const HARD_SEEK_THRESHOLD = 1.5; // seconds off -> seek
@@ -74,6 +82,13 @@ class Session extends EventEmitter {
     this.syncing = false;
     this.timers = [];
     this.lastEmit = 0;
+    this.pstats = null; // PlaybackStats for the video being watched
+    this.lastDriftSeekAt = 0;
+    this.lastDisturbAt = 0; // last seek / resume / load (see SETTLE_MS)
+    this.lastJumpAt = 0; // last seek / load: the position jumped, so drift isn't comparable across it
+    this.prevSample = null;
+    this.segment = null; // { at, drift }: start of the current uninterrupted stretch of playback
+    this.maxSpeedSinceSample = 1;
   }
 
   // ---------- lifecycle ----------
@@ -94,9 +109,20 @@ class Session extends EventEmitter {
     }, 2000));
     this.timers.push(setInterval(() => this._sendStatus(), 2000));
     this.timers.push(setInterval(() => this._emitUpdate(), 500));
+    this.timers.push(setInterval(() => this._sampleStats(), this.statsSampleMs || STATS_SAMPLE_MS));
+  }
+
+  /** End the current video's stats now (emits 'playback-report' if enough was watched). */
+  finishStats() {
+    const st = this.pstats;
+    this.pstats = null;
+    if (!st) return;
+    const rep = st.report();
+    if (rep) this.emit('playback-report', rep);
   }
 
   stop() {
+    this.finishStats();
     this.closed = true;
     for (const t of this.timers) clearInterval(t);
     clearTimeout(this.bufferTimer);
@@ -141,6 +167,7 @@ class Session extends EventEmitter {
 
   /** Close the player because there's nothing to play (not the user closing it). */
   _closePlayer() {
+    this.finishStats();
     const mpv = this.mpv;
     this.playerOpen = false;
     this.loadedMediaId = null;
@@ -469,7 +496,7 @@ class Session extends EventEmitter {
     this.playerOpen = true;
     this.ps = { paused: true, timePos: null, duration: null, seeking: false, pausedForCache: false, cacheDur: 0, cacheIdle: false, volume, muted: keep.includes('--mute=yes') };
     this.speed = 1;
-    for (const p of ['pause', 'duration', 'seeking', 'paused-for-cache', 'demuxer-cache-duration', 'demuxer-cache-idle', 'volume', 'mute']) {
+    for (const p of ['pause', 'duration', 'seeking', 'paused-for-cache', 'demuxer-cache-duration', 'demuxer-cache-idle', 'volume', 'mute', 'hwdec-current']) {
       await mpv.observe(p).catch(() => {});
     }
   }
@@ -486,6 +513,15 @@ class Session extends EventEmitter {
     const local = this.resolveLocal(media);
     const target = local || `${this.baseUrl}/media/${media.id}?k=${encodeURIComponent(this.code)}`;
     this.source = local ? 'local' : 'stream';
+    // Same video again (player reopened, in-app <-> popped out): keep counting into one record.
+    if (!this.pstats || this.pstats.mediaId !== media.id || this.pstats.source !== this.source) {
+      this.finishStats();
+      this.pstats = new PlaybackStats({ media, source: this.source, role: this.isHost ? 'host' : 'guest' });
+      this.pstats.mediaId = media.id;
+      this.warned = {};
+    }
+    this.pstats.lastDrops = null; // mpv's counters start again in a new player
+    this.videoInfoRead = false;
     this.loadedMediaId = media.id;
     this.loading = true;
     this.stallLatched = false;
@@ -512,8 +548,12 @@ class Session extends EventEmitter {
         this.ps.paused = !!value;
         this._onPauseChange(!!value);
         break;
+      case 'hwdec-current':
+        if (this.pstats) this.pstats.setHwdec(value);
+        return;
       case 'duration':
         this.ps.duration = typeof value === 'number' ? value : null;
+        if (this.pstats && this.ps.duration) this.pstats.duration = this.ps.duration;
         if (this.ps.duration && this.loadedMediaId) {
           this._send({ type: 'media-info', mediaId: this.loadedMediaId, duration: this.ps.duration });
         }
@@ -553,8 +593,11 @@ class Session extends EventEmitter {
       case 'file-loaded':
         this.loading = false;
         this.loadedAt = Date.now();
+        this.lastDisturbAt = this.loadedAt;
+        this.lastJumpAt = this.loadedAt;
         this._updateBuffering();
         this._sync();
+        this._readVideoInfo();
         break;
       case 'end-file':
         if (e.reason === 'error') {
@@ -571,6 +614,8 @@ class Session extends EventEmitter {
           return;
         }
         this.ourSeeks = 0;
+        this.lastDisturbAt = now; // the user seeked
+        this.lastJumpAt = now;
         if (this.loading || now - this.loadedAt < 1500) return;
         this.pendingUserSeek = true; // user seeked inside mpv; report once it settles
         break;
@@ -581,6 +626,8 @@ class Session extends EventEmitter {
         break;
       }
       case 'playback-restart':
+        // video-params is only known once the first frame is decoded
+        if (!this.videoInfoRead) this._readVideoInfo();
         if (this.pendingUserSeek) {
           this.mpv.get('time-pos')
             .then((pos) => {
@@ -657,12 +704,112 @@ class Session extends EventEmitter {
 
   _reportBuffering(b) {
     this.reportedBuffering = b;
+    if (this.pstats) {
+      if (b) this.pstats.stallStart(this._stallCause());
+      else this.pstats.stallEnd();
+    }
     this._sendStatus();
     this._emitUpdate(true);
   }
 
+  /** Why we're stalling right now, as best we can tell. */
+  _stallCause() {
+    const now = Date.now();
+    if (this.loading) return 'load';
+    // jumped forward because we fell behind, while the decoder couldn't keep up: not the network
+    if (this.pstats && this.pstats.decodeSlow && now - this.lastDriftSeekAt < 3000) return 'decode';
+    if (this.pendingUserSeek || this.ps.seeking || now - this.lastOurSeekAt < 3000) return 'seek';
+    if (this.ps.pausedForCache || this.stallLatched) return 'network';
+    if (this.room && this.room.waiting) return 'align';
+    return 'other';
+  }
+
+  get decodeSlow() {
+    return !!(this.pstats && this.pstats.decodeSlow);
+  }
+
   _sendStatus() {
-    this._send({ type: 'status', buffering: !!this.reportedBuffering, drift: this.drift, source: this.source, rtt: this.rtt });
+    this._send({ type: 'status', buffering: !!this.reportedBuffering, drift: this.drift, source: this.source, rtt: this.rtt, slow: this.decodeSlow });
+  }
+
+  // ---------- playback stats ----------
+
+  async _readVideoInfo() {
+    const st = this.pstats;
+    if (!st || !this.mpv || !this.playerOpen) return;
+    const g = (p) => this.mpv.get(p).catch(() => null);
+    const [format, params, fps, fileFormat, mpvVersion] = await Promise.all([
+      g('video-format'), g('video-params'), g('container-fps'), g('file-format'), g('mpv-version'),
+    ]);
+    if (st !== this.pstats) return;
+    st.setVideoInfo({ format, params, fps, fileFormat, duration: this.ps.duration, mpvVersion });
+    if (params) this.videoInfoRead = true;
+  }
+
+  async _sampleStats() {
+    const st = this.pstats;
+    if (!st || !this.mpv || !this.playerOpen || this.loading || this.closed) return;
+    const r = this.room;
+    const playing = !!(r && r.media && !r.paused && !r.waiting && !this.reportedBuffering && !this.ps.paused);
+    const g = (p) => this.mpv.get(p).catch(() => null);
+    const [voDrops, decoderDrops, avsync, cacheSpeed] = await Promise.all([
+      g('frame-drop-count'), g('decoder-frame-drop-count'), g('avsync'),
+      this.source === 'stream' ? g('cache-speed') : null,
+    ]);
+    if (st !== this.pstats) return;
+    const wasSlow = st.decodeSlow;
+    const now = Date.now();
+    const speed = Math.max(this.speed, this.maxSpeedSinceSample || 1); // fastest it ran this interval
+    this.maxSpeedSinceSample = this.speed;
+    // How much further behind the room clock did we get since the stretch of uninterrupted
+    // playback began (drift < 0 = behind)? A struggling player gets seeked forward every few
+    // seconds, so measuring only between whole sample intervals almost never got a reading.
+    const seg = this.segment;
+    let behindRate = null;
+    if (playing && seg && seg.at > this.lastDisturbAt && now - seg.at >= 1000 && Number.isFinite(this.drift)) {
+      behindRate = (seg.drift - this.drift) / ((now - seg.at) / 1000);
+    }
+    if (playing && seg && seg.at > this.lastDisturbAt) this.segment = { at: now, drift: this.drift };
+    // frame drops: only judged when nothing happened since shortly before the previous sample
+    const start = this.prevSample;
+    const settled = !!start && this.lastDisturbAt < start.at - SETTLE_MS;
+    this.prevSample = { at: now };
+    st.sample({
+      playing,
+      settled,
+      behindRate,
+      speed,
+      voDrops,
+      decoderDrops,
+      avsync,
+      cacheSec: this.ps.cacheDur,
+      cacheSpeed,
+      rtt: this.isHost ? null : this.rtt,
+      drift: this.drift,
+      viewers: this.members.length,
+    });
+    if (playing) this._checkDecodeWarnings(st, wasSlow);
+  }
+
+  /** Tell the viewer (once per video) when their PC, not the network, is the problem. */
+  _checkDecodeWarnings(st, wasSlow) {
+    const v = st.video;
+    const label = `${(v.codec || 'this').toUpperCase()}${v.height ? ' ' + v.height + 'p' : ''}`;
+    if (!this.warned.cpu && st.hwdec === 'no' && isHeavyVideo(v)) {
+      this.warned.cpu = true;
+      const text = `Your graphics card isn't decoding this ${label} video, so your PC may not keep up and it can stutter. A version in another format (for example H.264) would play smoothly.`;
+      this._log(text);
+      this.osd(`Your PC is decoding this ${label} video without the graphics card. It may stutter.`, 6000);
+    }
+    if (st.decodeSlow !== wasSlow) {
+      this._sendStatus();
+      this._emitUpdate(true);
+      if (st.decodeSlow && !this.warned.slow) {
+        this.warned.slow = true;
+        this._log(`Your PC can't decode this ${label} video fast enough, so the others may have to wait for you. This isn't your internet connection.`);
+        this.osd("Your PC can't decode this video fast enough.", 5000);
+      }
+    }
   }
 
   // ---------- the sync loop ----------
@@ -684,6 +831,7 @@ class Session extends EventEmitter {
       const now = Date.now();
 
       if (this.ps.paused !== desiredPaused) {
+        if (!desiredPaused) this.lastDisturbAt = now; // resuming
         this.lastPauseCmdAt = now;
         this.ps.paused = desiredPaused;
         await this.mpv.set('pause', desiredPaused).catch(() => {});
@@ -692,6 +840,10 @@ class Session extends EventEmitter {
       if (this.ps.timePos == null || this.ps.seeking || now < this.ourSeekUntil || this.pendingUserSeek) return;
       const diff = this.ps.timePos - expected;
       this.drift = diff;
+      // start of an uninterrupted stretch of playback (playstats: is it falling behind?)
+      if (!desiredPaused && (!this.segment || this.segment.at <= this.lastDisturbAt) && now - this.lastDisturbAt >= SEGMENT_SETTLE_MS) {
+        this.segment = { at: now, drift: diff };
+      }
 
       if (desiredPaused) {
         this.correcting = false;
@@ -700,12 +852,23 @@ class Session extends EventEmitter {
       } else if (Math.abs(diff) > HARD_SEEK_THRESHOLD) {
         this.correcting = false;
         await this._setSpeed(1);
+        if (diff < 0) {
+          this.lastDriftSeekAt = Date.now();
+          const st = this.pstats;
+          if (st) {
+            const wasSlow = st.decodeSlow;
+            st.driftSeek();
+            if (st.decodeSlow !== wasSlow) this._checkDecodeWarnings(st, wasSlow); // tell them now
+          }
+        }
         await this._seek(expected);
       } else {
         const a = Math.abs(diff);
         if (a > SOFT_START) this.correcting = true;
         else if (a < SOFT_STOP) this.correcting = false;
-        const speed = this.correcting ? 1 - clamp(diff * SPEED_GAIN, -MAX_SPEED_NUDGE, MAX_SPEED_NUDGE) : 1;
+        let speed = this.correcting ? 1 - clamp(diff * SPEED_GAIN, -MAX_SPEED_NUDGE, MAX_SPEED_NUDGE) : 1;
+        // A decoder that can't keep up at 1x falls further behind when asked for more.
+        if (speed > 1 && this.decodeSlow) speed = 1;
         await this._setSpeed(Math.round(speed * 1000) / 1000);
       }
     } finally {
@@ -715,6 +878,8 @@ class Session extends EventEmitter {
 
   async _seek(t) {
     const now = Date.now();
+    this.lastDisturbAt = now;
+    this.lastJumpAt = now;
     this.ourSeeks = (now - this.lastOurSeekAt < 3000 ? this.ourSeeks : 0) + 1;
     this.lastOurSeekAt = now;
     this.ourSeekUntil = now + 1000; // don't re-seek again straight away
@@ -724,6 +889,7 @@ class Session extends EventEmitter {
   async _setSpeed(s) {
     if (s === this.speed) return;
     this.speed = s;
+    this.maxSpeedSinceSample = Math.max(this.maxSpeedSinceSample || 1, s);
     await this.mpv.set('speed', s).catch(() => {});
   }
 

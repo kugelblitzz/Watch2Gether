@@ -10,6 +10,9 @@ const { parseInvite, cursorXInWindow } = require('./util');
 const { initUpdater, installUpdate, checkNow, checkAfterLobby } = require('./updater');
 const { Hotkeys } = require('./hotkeys');
 const { sectionFor } = require('./changelog');
+const { Telemetry, machineInfo } = require('./telemetry');
+
+let telemetry = null; // anonymous playback stats (opt-in), created once the app is ready
 
 // Echo cancellation must hear everything the app plays (voice is played through Web
 // Audio, not a WebRTC call), otherwise friends on speakers send our own voice back.
@@ -146,6 +149,7 @@ function wireSession(s) {
       overlay.setKeep(sidebarOut || !!(u.room && u.room.media && u.room.paused));
     }
   });
+  s.on('playback-report', (r) => { if (telemetry) telemetry.record(r); }); // dropped without consent
   s.on('voice', (msg) => send('voice', msg));
   s.on('voice-audio', (buf) => send('voice-audio', buf));
   s.on('volume', (v) => {
@@ -178,6 +182,7 @@ function wireSession(s) {
 async function leave({ restarting = false } = {}) {
   hotkeys.stop();
   if (session) {
+    session.finishStats(); // while its 'playback-report' listener is still attached
     session.removeAllListeners();
     session.stop();
     session = null;
@@ -410,6 +415,17 @@ function registerIpc() {
     if (rec) saveSettings({ resume: null });
     return rec && Date.now() - rec.at < RESUME_MAX_AGE_MS ? rec : null;
   });
+  // anonymous playback stats
+  ipcMain.handle('stats:status', () => (telemetry ? telemetry.status() : { consent: null, queued: 0 }));
+  ipcMain.handle('stats:consent', (_e, yes) => {
+    if (!telemetry || typeof yes !== 'boolean') throw new Error('Invalid choice');
+    return telemetry.setConsent(yes);
+  });
+  ipcMain.handle('stats:preview', () => (telemetry ? telemetry.preview() : null));
+  ipcMain.handle('stats:delete', () => {
+    if (!telemetry) throw new Error('Stats are not available.');
+    return telemetry.deleteMyData();
+  });
   ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text)));
   ipcMain.handle('open:external', (_e, url) => {
     if (/^https:\/\//.test(url)) shell.openExternal(url);
@@ -529,6 +545,16 @@ if (!app.requestSingleInstanceLock()) {
     });
     electronSession.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media');
     loadSettings();
+    let machine = {};
+    machineInfo(() => app.getGPUInfo('basic')).then((m) => { machine = m; }).catch(() => {});
+    telemetry = new Telemetry({
+      dir: app.getPath('userData'),
+      getSettings: () => settings,
+      saveSettings,
+      machine: () => machine,
+      appVersion: app.getVersion(),
+    });
+    telemetry.flushSoon(30000); // anything left from last time, once the app has settled
     registerIpc();
     createWindow();
     initUpdater((u) => send('app-update', u), () => !!session);
