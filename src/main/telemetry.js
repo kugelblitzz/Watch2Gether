@@ -133,7 +133,11 @@ class Telemetry {
   /** Upload what's queued. Resolves to the number of reports the server accepted. */
   flush() {
     if (this.flushing) return this.flushing;
-    this.flushing = (async () => {
+    // Cleared once the promise settles, not inside it: with nothing queued the body finishes
+    // synchronously, so an inner `finally { flushing = null }` ran *before* the assignment and
+    // left a settled promise in `flushing` -- every later flush returned it and sent nothing
+    // (v0.10.0: the empty start-up check blocked all uploads for the rest of the session).
+    const run = (async () => {
       let sent = 0;
       try {
         while (this.consent === 'yes' && this.installId) {
@@ -155,12 +159,12 @@ class Telemetry {
         // offline / server trouble: try again later, a bit later each time
         this.flushSoon(RETRY_MS[Math.min(this.failures, RETRY_MS.length - 1)]);
         this.failures++;
-      } finally {
-        this.flushing = null;
       }
       return sent;
     })();
-    return this.flushing;
+    this.flushing = run;
+    run.finally(() => { if (this.flushing === run) this.flushing = null; }).catch(() => {});
+    return run;
   }
 
   /**

@@ -4,6 +4,11 @@ What changed in each version, for people using the app. The release workflow cop
 section for the version being released into the GitHub release notes, so write each entry
 for a user, not a developer.
 
+## 0.10.1
+
+**Fixed**
+- Anonymous playback stats (if you said yes) are sent right after each video again. In 0.10.0 they waited until the next time the app started.
+
 ## 0.10.0
 
 **New**

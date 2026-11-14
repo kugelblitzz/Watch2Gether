@@ -221,6 +221,18 @@ const sampleReport = () => {
     assert.strictEqual(t.status().queued, 0);
   });
 
+  await test('an empty check (the one 30 s after start) does not block later uploads', async () => {
+    // v0.10.0 bug: the empty start-up flush left a settled promise behind and nothing was sent after it
+    const t = make();
+    reply = () => ({ ok: true, status: 200 });
+    assert.strictEqual(await t.flush(), 0, 'nothing queued yet');
+    assert.strictEqual(await t.flush(), 0);
+    t.record(sampleReport());
+    clearTimeout(t.flushTimer);
+    assert.strictEqual(await t.flush(), 1, 'the report is sent');
+    assert.strictEqual(t.status().queued, 0);
+  });
+
   await test('offline: reports stay queued for later; the queue is capped', async () => {
     const t = make();
     reply = () => new Error('offline');
@@ -230,8 +242,9 @@ const sampleReport = () => {
     clearTimeout(t.flushTimer);
     assert.strictEqual(t.status().queued, 100);
     reply = () => ({ ok: true, status: 200 });
+    const before = calls.length;
     assert.strictEqual(await t.flush(), 100);
-    assert.strictEqual(calls.filter((c) => c.method === 'POST').length, 1 + 1 + 5, 'batches of 20');
+    assert.strictEqual(calls.slice(before).filter((c) => c.method === 'POST').length, 5, 'batches of 20');
   });
 
   await test('reports the server rejects (400) are dropped, not retried forever', async () => {
